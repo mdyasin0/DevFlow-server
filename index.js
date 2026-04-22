@@ -36,6 +36,85 @@ async function run() {
     // database collections
     const database = client.db("DevFlow");
     usersCollection = database.collection("users");
+    const projectsCollection = database.collection("projects");
+
+const { ObjectId } = require("mongodb");
+
+    // get single project by id 
+    app.get("/project/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const query = { _id: new ObjectId(id) };
+
+    const result = await projectsCollection.findOne(query);
+
+    res.send({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+// created project get
+app.get("/projects/:email", async (req, res) => {
+  try {
+    const email = req.params.email;
+
+    const query = { created_by: email };
+
+    const result = await projectsCollection.find(query).toArray();
+
+    res.send({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+    // project save
+
+    app.post("/projects", async (req, res) => {
+  try {
+    const { teamName, projectTitle, email } = req.body;
+
+    if (!teamName || !projectTitle || !email) {
+      return res.status(400).send({
+        success: false,
+        message: "All fields are required",
+      });
+    }
+
+    const project = {
+      teamName,
+      projectTitle,
+      created_by: email,
+      created_time: new Date(),
+      teammember: [],
+    };
+
+    const result = await projectsCollection.insertOne(project);
+
+    res.send({
+      success: true,
+      message: "Project created successfully",
+      data: result,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
 
     // users data save
     app.post("/users", async (req, res) => {
