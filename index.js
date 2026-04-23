@@ -40,6 +40,107 @@ async function run() {
 
 const { ObjectId } = require("mongodb");
 
+
+// GET invited projects by user email
+app.get("/my-invitations/:email", async (req, res) => {
+  try {
+    const email = req.params.email.toLowerCase();
+
+    const projects = await projectsCollection
+      .find({
+        "invite_email.email": email,
+      })
+      .toArray();
+
+    res.send({
+      success: true,
+      data: projects,
+    });
+  } catch (error) {
+    res.send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+
+// Update invitation status (approved/rejected) with add team member if approved
+app.patch("/invite-status/:projectId", async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { email, status , name} = req.body;
+
+    if (!email || !status) {
+      return res.send({ success: false, message: "Missing data" });
+    }
+
+    const project = await projectsCollection.findOne({
+      _id: new ObjectId(projectId),
+    });
+
+    const invite = project.invite_email.find(
+      (i) => i.email.toLowerCase() === email.toLowerCase()
+    );
+
+    if (!invite) {
+      return res.send({
+        success: false,
+        message: "Invitation not found",
+      });
+    }
+
+    // already selected হলে block
+    if (invite.status !== "pending") {
+      return res.send({
+        success: false,
+        message: "You already selected an option",
+      });
+    }
+
+    // 1. update invite status
+    await projectsCollection.updateOne(
+      {
+        _id: new ObjectId(projectId),
+        "invite_email.email": email,
+      },
+      {
+        $set: {
+          "invite_email.$.status": status,
+        },
+      }
+    );
+
+    // 2. যদি approved হয় → teammember এ add
+    if (status === "approved") {
+      await projectsCollection.updateOne(
+        { _id: new ObjectId(projectId) },
+        {
+          $push: {
+            teammember: {
+              email: email,
+              name: name,
+              todo: [],
+              running: [],
+              done: [],
+            },
+          },
+        }
+      );
+    }
+
+    res.send({
+      success: true,
+      message: `Invitation ${status}`,
+    });
+  } catch (error) {
+    res.send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+
+
 // invite email send and save email and status 
 
 const nodemailer = require("nodemailer");
@@ -207,6 +308,33 @@ app.get("/projects/:email", async (req, res) => {
     });
   } catch (error) {
     res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+// user data get by email
+app.get("/user/:email", async (req, res) => {
+  try {
+    const email = req.params.email;
+
+    const user = await usersCollection.findOne({
+      email: email,
+    });
+
+    if (!user) {
+      return res.send({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    res.send({
+      success: true,
+      data: user,
+    });
+  } catch (error) {
+    res.send({
       success: false,
       message: error.message,
     });
