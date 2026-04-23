@@ -40,6 +40,102 @@ async function run() {
 
 const { ObjectId } = require("mongodb");
 
+// invite email send and save email and status 
+
+const nodemailer = require("nodemailer");
+
+app.post("/invite/:id", async (req, res) => {
+  try {
+    const projectId = req.params.id;
+    const { email } = req.body;
+
+    if (!email) {
+      return res.send({ success: false, message: "Email required" });
+    }
+
+    // 1. project find কর
+    const project = await projectsCollection.findOne({
+      _id: new ObjectId(projectId),
+    });
+
+    // 2. check already invited কিনা
+    const existingInvite = project.invite_email.find(
+      (item) => item.email === email
+    );
+
+    if (existingInvite) {
+      // status অনুযায়ী message
+      if (existingInvite.status === "pending") {
+        return res.send({
+          success: false,
+          message:
+            "Already invitation sent. Please tell your team member to accept the invitation.",
+        });
+      }
+
+      if (existingInvite.status === "approved") {
+        return res.send({
+          success: false,
+          message: "This member already joined your team.",
+        });
+      }
+
+      if (existingInvite.status === "rejected") {
+        return res.send({
+          success: false,
+          message:
+            "User already rejected the invitation. If you want to send again by this email, delete the email from invitation list first.",
+        });
+      }
+    }
+
+    // 3. DB save
+    await projectsCollection.updateOne(
+      { _id: new ObjectId(projectId) },
+      {
+        $push: {
+          invite_email: {
+            email: email,
+            status: "pending",
+          },
+        },
+      }
+    );
+
+    // 4. email send
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: "mdyasin01928364@gmail.com",
+        pass: process.env.EMAIL_PASS,
+      },
+    });
+
+    await transporter.sendMail({
+      from: '"DevFlow" <your_email@gmail.com>',
+      to: email,
+      subject: "Project Invitation",
+      html: `
+        <h3>You have been invited to a project</h3>
+        <a href="http://localhost:5173/invite/${projectId}">
+          Join Project
+        </a>
+      `,
+    });
+
+    res.send({
+      success: true,
+      message: "Invite sent & saved",
+    });
+
+  } catch (error) {
+    res.send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+
     // get single project by id 
     app.get("/project/:id", async (req, res) => {
   try {
@@ -99,6 +195,7 @@ app.get("/projects/:email", async (req, res) => {
       created_by: email,
       created_time: new Date(),
       teammember: [],
+      invite_email:[],
     };
 
     const result = await projectsCollection.insertOne(project);
