@@ -39,7 +39,99 @@ async function run() {
     const projectsCollection = database.collection("projects");
 
 const { ObjectId } = require("mongodb");
+// UPDATE task
+app.patch("/update-task/:projectId", async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { email, type, taskId, text } = req.body;
 
+    const result = await projectsCollection.updateOne(
+      { _id: new ObjectId(projectId) },
+      {
+        $set: {
+          [`teammember.$[m].${type}.$[t].text`]: text.replace(/\n/g, "<br/>"),
+        },
+      },
+      {
+        arrayFilters: [
+          { "m.email": email },
+          { "t.id": taskId },
+        ],
+      }
+    );
+
+    res.send({ success: true, message: "Updated" });
+  } catch (err) {
+    res.send({ success: false, message: err.message });
+  }
+});
+// DELETE task
+app.delete("/delete-task/:projectId", async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { email, type, taskId } = req.body;
+
+    const result = await projectsCollection.updateOne(
+      { _id: new ObjectId(projectId) },
+      {
+        $pull: {
+          [`teammember.$[m].${type}`]: { id: taskId },
+        },
+      },
+      {
+        arrayFilters: [{ "m.email": email }],
+      }
+    );
+
+    res.send({ success: true, message: "Deleted" });
+  } catch (err) {
+    res.send({ success: false, message: err.message });
+  }
+});
+// work assign
+app.patch("/add-task/:projectId", async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { email, text } = req.body;
+
+    if (!email || !text) {
+      return res.send({
+        success: false,
+        message: "Missing data",
+      });
+    }
+
+    // 🔥 task object বানানো
+    const newTask = {
+      id: Date.now().toString(),
+      text: text, // line break frontend e handle korbi
+      createdAt: new Date(),
+    };
+
+    const result = await projectsCollection.updateOne(
+      {
+        _id: new ObjectId(projectId),
+        "teammember.email": email,
+      },
+      {
+        $push: {
+          "teammember.$.todo": newTask,
+        },
+      }
+    );
+
+    res.send({
+      success: true,
+      message: "Task added successfully",
+      data: newTask,
+    });
+  } catch (error) {
+    res.send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
 
 // GET invited projects by user email
 app.get("/my-invitations/:email", async (req, res) => {
