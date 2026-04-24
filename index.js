@@ -39,6 +39,60 @@ async function run() {
     const projectsCollection = database.collection("projects");
 
 const { ObjectId } = require("mongodb");
+
+
+// member remove with invite email 
+app.delete("/remove-member/:projectId/:email", async (req, res) => {
+  try {
+    const { projectId, email } = req.params;
+
+    const decodedEmail = decodeURIComponent(email);
+
+    const result = await projectsCollection.updateOne(
+      { _id: new ObjectId(projectId) },
+      {
+        $pull: {
+          teammember: { email: decodedEmail },
+          invite_email: { email: decodedEmail },
+        },
+      }
+    );
+
+    res.send({
+      success: true,
+      message: "Member removed from team & invites",
+      result,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+// remove that invite email which status are inpending or reject
+
+app.delete("/remove-invite/:id/:email", async (req, res) => {
+  const { id } = req.params;
+  const email = decodeURIComponent(req.params.email); // ✅ important
+
+  try {
+    const result = await projectsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $pull: {
+          invite_email: { email: email },
+        },
+      }
+    );
+
+    console.log("DELETE RESULT:", result);
+
+    res.send({ success: true, result });
+  } catch (err) {
+    res.status(500).send({ success: false, error: err.message });
+  }
+});
 // UPDATE task
 app.patch("/update-task/:projectId", async (req, res) => {
   try {
