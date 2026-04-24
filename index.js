@@ -39,8 +39,103 @@ async function run() {
     const projectsCollection = database.collection("projects");
 
 const { ObjectId } = require("mongodb");
+// tasks status change
+app.patch("/move-task/:projectId", async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { email, from, to, taskId } = req.body;
 
+    if (!email || !from || !to || !taskId) {
+      return res.send({
+        success: false,
+        message: "Missing required fields",
+      });
+    }
 
+    const project = await projectsCollection.findOne({
+      _id: new ObjectId(projectId),
+    });
+
+    if (!project) {
+      return res.send({ success: false, message: "Project not found" });
+    }
+
+    const member = project.teammember.find((m) => m.email === email);
+
+    if (!member) {
+      return res.send({ success: false, message: "Member not found" });
+    }
+
+    // ✅ এখানে তোমার চাওয়া validation block ADD করা হলো
+    const task = member[from]?.find((t) => t.id === taskId);
+
+    if (!task) {
+      return res.send({
+        success: false,
+        message: "Task not found in source array",
+      });
+    }
+
+    // 🟢 REMOVE from old array
+    await projectsCollection.updateOne(
+      { _id: new ObjectId(projectId) },
+      {
+        $pull: {
+          [`teammember.$[m].${from}`]: { id: taskId },
+        },
+      },
+      {
+        arrayFilters: [{ "m.email": email }],
+      }
+    );
+
+    // 🟢 ADD to new array
+    await projectsCollection.updateOne(
+      { _id: new ObjectId(projectId) },
+      {
+        $push: {
+          [`teammember.$[m].${to}`]: task,
+        },
+      },
+      {
+        arrayFilters: [{ "m.email": email }],
+      }
+    );
+
+    res.send({
+      success: true,
+      message: "Task moved successfully",
+    });
+
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+// joined team data get by user email
+app.get("/my-projects/:email", async (req, res) => {
+  try {
+    const email = req.params.email.toLowerCase();
+
+    const projects = await projectsCollection
+      .find({
+        "teammember.email": email,
+      })
+      .toArray();
+
+    res.send({
+      success: true,
+      data: projects,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
 // member remove with invite email 
 app.delete("/remove-member/:projectId/:email", async (req, res) => {
   try {
