@@ -583,32 +583,78 @@ app.get("/user/:email", async (req, res) => {
 });
 
     // users data save
-    app.post("/users", async (req, res) => {
-      try {
-        const { name, email, role } = req.body;
+    
+ app.post("/users", async (req, res) => {
+  try {
+    const { name, email, role } = req.body;
 
-        const user = {
-          name,
-          email,
-          role: role || "developer", // default role
-          createdAt: new Date(),
-        };
+    if (!email) {
+      return res.status(400).send({
+        success: false,
+        message: "Email is required",
+      });
+    }
 
-        const result = await usersCollection.insertOne(user);
+    const filter = { email };
 
-        res.send({
-          success: true,
-          message: "User registered successfully",
-          data: result,
-        });
-      } catch (error) {
-        res.status(500).send({
-          success: false,
-          message: error.message,
-        });
-      }
+    const updateDoc = {
+      $set: {
+        name: name || "No Name",
+        role: role || "developer",
+        updatedAt: new Date(),
+      },
+      $setOnInsert: {
+        createdAt: new Date(),
+      },
+    };
+
+    const result = await usersCollection.updateOne(filter, updateDoc, {
+      upsert: true,
     });
 
+    res.send({
+      success: true,
+      message: "User synced successfully",
+      data: result,
+    });
+
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+// update user data as profile update 
+
+app.patch("/users/:email", async (req, res) => {
+  try {
+    const email = req.params.email;
+    const { name } = req.body; // ❌ photo removed
+
+    const result = await usersCollection.updateOne(
+      { email },
+      {
+        $set: {
+          name,
+          updatedAt: new Date(),
+        },
+      }
+    );
+
+    res.send({
+      success: true,
+      message: "Profile updated successfully",
+      data: result,
+    });
+
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
     console.log(
