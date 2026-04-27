@@ -39,13 +39,14 @@ async function run() {
     const projectsCollection = database.collection("projects");
 
 const { ObjectId } = require("mongodb");
-// tasks status change
-app.patch("/move-task/:projectId", async (req, res) => {
+
+// reopen , move done to running
+app.patch("/reopen-task/:projectId", async (req, res) => {
   try {
     const { projectId } = req.params;
-    const { email, from, to, taskId } = req.body;
+    const { email, taskId } = req.body;
 
-    if (!email || !from || !to || !taskId) {
+    if (!email || !taskId) {
       return res.send({
         success: false,
         message: "Missing required fields",
@@ -66,17 +67,125 @@ app.patch("/move-task/:projectId", async (req, res) => {
       return res.send({ success: false, message: "Member not found" });
     }
 
-    // ✅ এখানে তোমার চাওয়া validation block ADD করা হলো
-    const task = member[from]?.find((t) => t.id === taskId);
+    // find task in done
+    const task = member.done?.find((t) => t.id === taskId);
 
     if (!task) {
+      return res.send({ success: false, message: "Task not found in done" });
+    }
+
+    // remove from done
+    await projectsCollection.updateOne(
+      { _id: new ObjectId(projectId) },
+      {
+        $pull: {
+          "teammember.$[m].done": { id: taskId },
+        },
+      },
+      { arrayFilters: [{ "m.email": email }] }
+    );
+
+    // remove submittedAt when reopening
+    const updatedTask = { ...task };
+    delete updatedTask.submittedAt;
+
+    // push to running
+    await projectsCollection.updateOne(
+      { _id: new ObjectId(projectId) },
+      {
+        $push: {
+          "teammember.$[m].running": updatedTask,
+        },
+      },
+      { arrayFilters: [{ "m.email": email }] }
+    );
+
+    return res.send({
+      success: true,
+      message: "Task reopened successfully",
+    });
+  } catch (err) {
+    return res.status(500).send({
+      success: false,
+      message: err.message,
+    });
+  }
+});
+// delete project
+
+app.delete("/projects/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const result = await projectsCollection.deleteOne({
+      _id: new ObjectId(id),
+    });
+
+    if (result.deletedCount === 1) {
       return res.send({
-        success: false,
-        message: "Task not found in source array",
+        success: true,
+        message: "Project deleted successfully",
       });
     }
 
-    // 🟢 REMOVE from old array
+    res.status(404).send({
+      success: false,
+      message: "Project not found",
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+// tasks status change
+app.patch("/move-task/:projectId", async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { email, from, to, taskId } = req.body;
+
+    if (!email || !from || !to || !taskId) {
+      return res.send({
+        success: false,
+        message: "Missing required fields",
+      });
+    }
+
+    const allowedMoves = {
+      todo: ["running"],
+      running: ["done"],
+      done: [],
+    };
+
+    if (!allowedMoves[from]?.includes(to)) {
+      return res.send({
+        success: false,
+        message: `Invalid move ${from} → ${to}`,
+      });
+    }
+
+    const project = await projectsCollection.findOne({
+      _id: new ObjectId(projectId),
+    });
+
+    if (!project) {
+      return res.send({ success: false, message: "Project not found" });
+    }
+
+    const member = project.teammember.find((m) => m.email === email);
+
+    if (!member) {
+      return res.send({ success: false, message: "Member not found" });
+    }
+
+    const task = member[from]?.find((t) => t.id === taskId);
+
+    if (!task) {
+      return res.send({ success: false, message: "Task not found" });
+    }
+
+    // remove from old status
     await projectsCollection.updateOne(
       { _id: new ObjectId(projectId) },
       {
@@ -84,33 +193,40 @@ app.patch("/move-task/:projectId", async (req, res) => {
           [`teammember.$[m].${from}`]: { id: taskId },
         },
       },
-      {
-        arrayFilters: [{ "m.email": email }],
-      }
+      { arrayFilters: [{ "m.email": email }] }
     );
 
-    // 🟢 ADD to new array
+    // prepare updated task
+    const updatedTask = {
+      ...task,
+      
+    };
+
+    // ADD SUBMIT TIME ONLY WHEN DONE
+    if (to === "done") {
+      updatedTask.submittedAt = new Date().toISOString();
+    }
+
+    // push to new status
     await projectsCollection.updateOne(
       { _id: new ObjectId(projectId) },
       {
         $push: {
-          [`teammember.$[m].${to}`]: task,
+          [`teammember.$[m].${to}`]: updatedTask,
         },
       },
-      {
-        arrayFilters: [{ "m.email": email }],
-      }
+      { arrayFilters: [{ "m.email": email }] }
     );
 
-    res.send({
+    return res.send({
       success: true,
       message: "Task moved successfully",
     });
 
-  } catch (error) {
-    res.status(500).send({
+  } catch (err) {
+    return res.status(500).send({
       success: false,
-      message: error.message,
+      message: err.message,
     });
   }
 });
@@ -241,19 +357,20 @@ app.delete("/delete-task/:projectId", async (req, res) => {
 app.patch("/add-task/:projectId", async (req, res) => {
   try {
     const { projectId } = req.params;
-    const { email, text } = req.body;
+    const { email, text, deadline, priority } = req.body;
 
-    if (!email || !text) {
+    if (!email || !text || !deadline || !priority) {
       return res.send({
         success: false,
         message: "Missing data",
       });
     }
 
-    // 🔥 task object বানানো
     const newTask = {
       id: Date.now().toString(),
-      text: text, // line break frontend e handle korbi
+      text,
+      deadline: new Date(deadline),
+      priority,
       createdAt: new Date(),
     };
 
