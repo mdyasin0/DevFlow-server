@@ -39,6 +39,76 @@ async function run() {
     const projectsCollection = database.collection("projects");
 
     const { ObjectId } = require("mongodb");
+
+
+    // all users
+    app.get("/users", async (req, res) => {
+  try {
+    const users = await usersCollection.find().toArray();
+
+    res.send({
+      success: true,
+      data: users,
+    });
+  } catch (error) {
+    res.send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+
+// all projects
+app.get("/projects", async (req, res) => {
+  try {
+    const projects = await projectsCollection.find().toArray();
+
+    res.send({
+      success: true,
+      data: projects,
+    });
+  } catch (error) {
+    res.send({
+      success: false,
+      message: error.message,
+    });
+  }
+}); 
+// Send Email API (Nodemailer)
+
+
+app.post("/send-email", async (req, res) => {
+  try {
+    const { emails, subject, message } = req.body;
+
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: "mdyasin01928364@gmail.com",
+        pass: process.env.EMAIL_PASS,
+      },
+    });
+
+    const mailOptions = {
+      from: "mdyasin01928364@gmail.com",
+      to: emails, // array
+      subject: subject,
+      html: message, // rich text support
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    res.send({
+      success: true,
+      message: "Email sent successfully",
+    });
+  } catch (error) {
+    res.send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
     // created project update
     app.put("/projects/:id", async (req, res) => {
       try {
