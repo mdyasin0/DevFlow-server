@@ -41,6 +41,112 @@ async function run() {
     const { ObjectId } = require("mongodb");
 
 
+    // user bloack
+    app.patch("/users/block/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const result = await usersCollection.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          isBlocked: true,
+          updatedAt: new Date(),
+        },
+      }
+    );
+
+    res.send({
+      success: true,
+      message: "User blocked successfully",
+      data: result,
+    });
+  } catch (error) {
+    res.send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+
+// user unbloack
+app.patch("/users/unblock/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const result = await usersCollection.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          isBlocked: false,
+          updatedAt: new Date(),
+        },
+      }
+    );
+
+    res.send({
+      success: true,
+      message: "User unblocked successfully",
+      data: result,
+    });
+  } catch (error) {
+    res.send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+// users role change
+app.patch("/users/role/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { role } = req.body;
+
+    const result = await usersCollection.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: { role: role },
+      }
+    );
+
+    res.send({
+      success: true,
+      message: "Role updated successfully",
+      result,
+    });
+  } catch (error) {
+    res.send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+
+// user data get by email
+app.get("/users/:email", async (req, res) => {
+  try {
+    const email = req.params.email;
+
+    const user = await usersCollection.findOne({ email });
+
+    if (!user) {
+      return res.status(404).send({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    res.send({
+      success: true,
+      data: user,
+    });
+  } catch (error) {
+    res.send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
     // all users
     app.get("/users", async (req, res) => {
   try {
@@ -814,11 +920,12 @@ app.post("/send-email", async (req, res) => {
         const updateDoc = {
           $set: {
             name: name || "No Name",
-            role: role || "developer",
+            role: role || "developer", 
             updatedAt: new Date(),
           },
           $setOnInsert: {
             createdAt: new Date(),
+            isBlocked: false,
           },
         };
 
