@@ -147,6 +147,71 @@ app.get("/users/:email", async (req, res) => {
     });
   }
 });
+// all not block user get
+app.get("/approved_users", async (req, res) => {
+  try {
+    const users = await usersCollection
+      .find({ isBlocked: false })
+      .toArray();
+
+    res.send({
+      success: true,
+      data: users,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+// send email all inactive users 
+
+
+app.post("/email/send-inactive", async (req, res) => {
+  try {
+    const { subject, message } = req.body;
+
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    const inactiveUsers = await usersCollection
+      .find({
+        isBlocked: false,
+        lastActiveAt: { $lt: sevenDaysAgo },
+      })
+      .toArray();
+
+    const emails = inactiveUsers.map((u) => u.email);
+
+    // nodemailer setup
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: "mdyasin01928364@gmail.com",
+        pass: process.env.EMAIL_PASS,
+      },
+    });
+
+    await transporter.sendMail({
+      from: process.env.EMAIL,
+      to: emails,
+      subject,
+      html: message,
+    });
+
+    res.send({
+      success: true,
+      message: "Email sent to inactive users",
+      total: emails.length,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
     // all users
     app.get("/users", async (req, res) => {
   try {
@@ -163,7 +228,51 @@ app.get("/users/:email", async (req, res) => {
     });
   }
 });
+// project status update 
+app.patch("/projects/:id/status", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { status } = req.body;
 
+    // ✅ validation
+    if (!status) {
+      return res.status(400).send({
+        success: false,
+        message: "Status is required",
+      });
+    }
+
+    // ✅ allowed status check
+    const allowedStatus = ["pending", "approved", "rejected"];
+    if (!allowedStatus.includes(status)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid status value",
+      });
+    }
+
+    const filter = { _id: new ObjectId(id) };
+
+    const updateDoc = {
+      $set: {
+        status,
+      },
+    };
+
+    const result = await projectsCollection.updateOne(filter, updateDoc);
+
+    res.send({
+      success: true,
+      message: `Project ${status} successfully`,
+      data: result,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
 // all projects
 app.get("/projects", async (req, res) => {
   try {
@@ -219,7 +328,7 @@ app.post("/send-email", async (req, res) => {
     app.put("/projects/:id", async (req, res) => {
       try {
         const id = req.params.id;
-        const { teamName, projectTitle } = req.body;
+        const { teamName, projectTitle ,description} = req.body;
 
         const filter = { _id: new ObjectId(id) };
 
@@ -227,6 +336,7 @@ app.post("/send-email", async (req, res) => {
           $set: {
             teamName,
             projectTitle,
+            description,
           },
         };
 
@@ -818,33 +928,36 @@ app.post("/send-email", async (req, res) => {
         });
       }
     });
-    // created project get
-    app.get("/projects/:email", async (req, res) => {
-      try {
-        const email = req.params.email;
+    // created project get only approved project
+   app.get("/projects/:email", async (req, res) => {
+  try {
+    const email = req.params.email;
 
-        const query = { created_by: email };
+    const query = {
+      created_by: email,
+      status: "approved", // 👈 main fix
+    };
 
-        const result = await projectsCollection.find(query).toArray();
+    const result = await projectsCollection.find(query).toArray();
 
-        res.send({
-          success: true,
-          data: result,
-        });
-      } catch (error) {
-        res.status(500).send({
-          success: false,
-          message: error.message,
-        });
-      }
+    res.send({
+      success: true,
+      data: result,
     });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
     // project save
 
     app.post("/projects", async (req, res) => {
       try {
-        const { teamName, projectTitle, email } = req.body;
+        const { teamName, projectTitle,description, email } = req.body;
 
-        if (!teamName || !projectTitle || !email) {
+        if (!teamName || !projectTitle || !description || !email) {
           return res.status(400).send({
             success: false,
             message: "All fields are required",
@@ -854,8 +967,10 @@ app.post("/send-email", async (req, res) => {
         const project = {
           teamName,
           projectTitle,
+          description,
           created_by: email,
           created_time: new Date(),
+           status: "pending",
           teammember: [],
           invite_email: [],
         };
@@ -926,6 +1041,7 @@ app.post("/send-email", async (req, res) => {
           $setOnInsert: {
             createdAt: new Date(),
             isBlocked: false,
+            lastActiveAt: new Date(),
           },
         };
 
