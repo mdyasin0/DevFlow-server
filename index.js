@@ -4,8 +4,32 @@ const express = require("express");
 const cors = require("cors");
 
 const app = express();
-
+const http = require("http");
+const server = http.createServer(app);
+const { Server } = require("socket.io");
 const PORT = process.env.PORT || 5000;
+const io = new Server(server, {
+  cors: {
+    origin: "*", // production এ specific domain দিবা
+    methods: ["GET", "POST", "PATCH", "DELETE"],
+  },
+});
+
+
+io.on("connection", (socket) => {
+  console.log("User connected:", socket.id);
+
+  // user join room (IMPORTANT for notification)
+  socket.on("join", (userId) => {
+    socket.join(userId);
+    console.log("User joined room:", userId);
+  });
+
+  socket.on("disconnect", () => {
+    console.log("User disconnected:", socket.id);
+  });
+});
+
 
 // middleware
 app.use(cors());
@@ -37,6 +61,7 @@ async function run() {
     const database = client.db("DevFlow");
     usersCollection = database.collection("users");
     const projectsCollection = database.collection("projects");
+    const notificationsCollection = database.collection("notifications");
 
     const { ObjectId } = require("mongodb");
 
@@ -951,44 +976,135 @@ app.post("/send-email", async (req, res) => {
     });
   }
 });
-    // project save
+// get all nitification
+app.get("/notifications", async (req, res) => {
+  try {
+    const email = req.query.email;
 
-    app.post("/projects", async (req, res) => {
-      try {
-        const { teamName, projectTitle,description, email } = req.body;
+    const user = await usersCollection.findOne({ email });
 
-        if (!teamName || !projectTitle || !description || !email) {
-          return res.status(400).send({
-            success: false,
-            message: "All fields are required",
-          });
-        }
+    if (!user) {
+      return res.status(401).send({
+        success: false,
+        message: "User not found",
+      });
+    }
 
-        const project = {
-          teamName,
-          projectTitle,
-          description,
-          created_by: email,
-          created_time: new Date(),
-           status: "pending",
-          teammember: [],
-          invite_email: [],
-        };
+    let query = {};
 
-        const result = await projectsCollection.insertOne(project);
+    if (user.role === "admin") {
+      // admin sees admin + all + own
+      query = {
+        $or: [
+          { role: "admin" },
+          { role: "all" },
+          { receiverId: user._id },
+        ],
+      };
+    } else {
+      // normal user sees only all + own
+      query = {
+        $or: [
+          { role: "all" },
+          { receiverId: user._id },
+        ],
+      };
+    }
 
-        res.send({
-          success: true,
-          message: "Project created successfully",
-          data: result,
-        });
-      } catch (error) {
-        res.status(500).send({
-          success: false,
-          message: error.message,
-        });
-      }
+    const notifications = await notificationsCollection
+      .find(query)
+      .sort({ created_time: -1 })
+      .toArray();
+
+    res.send({
+      success: true,
+      data: notifications,
     });
+
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+    // project save with socket.io
+
+app.post("/projects", async (req, res) => {
+  try {
+    const { teamName, projectTitle, description, email } = req.body;
+
+    if (!teamName || !projectTitle || !description || !email) {
+      return res.status(400).send({
+        success: false,
+        message: "All fields are required",
+      });
+    }
+
+    const project = {
+      teamName,
+      projectTitle,
+      description,
+      created_by: email,
+      created_time: new Date(),
+      status: "pending",
+      teammember: [],
+      invite_email: [],
+    };
+
+    const result = await projectsCollection.insertOne(project);
+
+    const newProject = {
+      _id: result.insertedId,
+      ...project,
+    };
+
+    // 🔥 GET USER
+    const user = await usersCollection.findOne({ email });
+
+    // 🔥 ROLE DETERMINE
+    const isAdmin = user?.role === "admin";
+
+    // 🔥 NOTIFICATION LOGIC (IMPORTANT)
+    const notification = {
+      type: "project_created",
+      message: "A project created, check for approval",
+
+      // 🎯 WHO WILL SEE THIS
+      role: isAdmin ? "admin" : "user",
+      receiverId: isAdmin ? null : user?._id,
+
+      url: "/admin_dashboard_layout/project_monitoring",
+
+      created_by: email,
+      created_time: new Date(),
+      read: false,
+    };
+
+    const savedNotification = await notificationsCollection.insertOne(notification);
+
+    const fullNotification = {
+      _id: savedNotification.insertedId,
+      ...notification,
+    };
+
+    // 🔥 REALTIME
+    io.emit("newNotification", fullNotification);
+    io.emit("newProject", newProject);
+
+    res.send({
+      success: true,
+      message: "Project created successfully",
+      data: result,
+    });
+
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
     // user data get by email
     app.get("/user/:email", async (req, res) => {
       try {
@@ -1102,6 +1218,6 @@ app.post("/send-email", async (req, res) => {
 run();
 
 // server start
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
