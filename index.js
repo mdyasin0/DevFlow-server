@@ -20,10 +20,10 @@ io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
   // user join room (IMPORTANT for notification)
-  socket.on("join", (userId) => {
-    socket.join(userId);
-    console.log("User joined room:", userId);
-  });
+socket.on("join", (userId) => {
+  socket.join(userId.toString());
+  console.log("User joined room:", userId);
+});
 
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
@@ -253,13 +253,12 @@ app.post("/email/send-inactive", async (req, res) => {
     });
   }
 });
-// project status update 
+// project status update notification save socket .io added
 app.patch("/projects/:id/status", async (req, res) => {
   try {
     const id = req.params.id;
-    const { status } = req.body;
+    const { status, updatedBy } = req.body;
 
-    // ✅ validation
     if (!status) {
       return res.status(400).send({
         success: false,
@@ -267,7 +266,6 @@ app.patch("/projects/:id/status", async (req, res) => {
       });
     }
 
-    // ✅ allowed status check
     const allowedStatus = ["pending", "approved", "rejected"];
     if (!allowedStatus.includes(status)) {
       return res.status(400).send({
@@ -276,21 +274,80 @@ app.patch("/projects/:id/status", async (req, res) => {
       });
     }
 
-    const filter = { _id: new ObjectId(id) };
+    // 🔥 1. project find
+    const project = await projectsCollection.findOne({
+      _id: new ObjectId(id),
+    });
 
-    const updateDoc = {
-      $set: {
-        status,
-      },
+    if (!project) {
+      return res.status(404).send({
+        success: false,
+        message: "Project not found",
+      });
+    }
+
+    // 🔥 2. update status
+    await projectsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status } }
+    );
+
+    // 🔥 3. message set
+    let message = "";
+    if (status === "approved") {
+      message = "Your project has been approved";
+    } else if (status === "rejected") {
+      message =
+        "Your project rejected. Please create project based on rules and regulations";
+    } else {
+      message = "Project status updated";
+    }
+
+    // 🔥 4. receiver user find (IMPORTANT)
+    const receiverUser = await usersCollection.findOne({
+      email: project.created_by,
+    });
+
+    if (!receiverUser?._id) {
+      return res.status(404).send({
+        success: false,
+        message: "Receiver user not found",
+      });
+    }
+
+    // 🔥 5. CLEAN notification object (as you wanted)
+    const notification = {
+      type: "project_status_updated",
+      message,
+
+      receiverId: receiverUser._id,  // 🔥 MAIN TARGET
+
+      url: "/developer_dashboard/created_project",
+
+      created_by: updatedBy,
+      created_time: new Date(),
+      read: false,
     };
 
-    const result = await projectsCollection.updateOne(filter, updateDoc);
+    // 🔥 6. save
+    const result = await notificationsCollection.insertOne(notification);
+
+    const fullNotification = {
+      _id: result.insertedId,
+      ...notification,
+    };
+
+    // 🔥 7. socket send to specific user
+    io.to(receiverUser._id.toString()).emit(
+      "newNotification",
+      fullNotification
+    );
 
     res.send({
       success: true,
       message: `Project ${status} successfully`,
-      data: result,
     });
+
   } catch (error) {
     res.status(500).send({
       success: false,
@@ -976,43 +1033,11 @@ app.post("/send-email", async (req, res) => {
     });
   }
 });
-// get all nitification
+// get all notifications (no role filter)
 app.get("/notifications", async (req, res) => {
   try {
-    const email = req.query.email;
-
-    const user = await usersCollection.findOne({ email });
-
-    if (!user) {
-      return res.status(401).send({
-        success: false,
-        message: "User not found",
-      });
-    }
-
-    let query = {};
-
-    if (user.role === "admin") {
-      // admin sees admin + all + own
-      query = {
-        $or: [
-          { role: "admin" },
-          { role: "all" },
-          { receiverId: user._id },
-        ],
-      };
-    } else {
-      // normal user sees only all + own
-      query = {
-        $or: [
-          { role: "all" },
-          { receiverId: user._id },
-        ],
-      };
-    }
-
     const notifications = await notificationsCollection
-      .find(query)
+      .find()
       .sort({ created_time: -1 })
       .toArray();
 
@@ -1020,7 +1045,6 @@ app.get("/notifications", async (req, res) => {
       success: true,
       data: notifications,
     });
-
   } catch (error) {
     res.status(500).send({
       success: false,
@@ -1028,7 +1052,7 @@ app.get("/notifications", async (req, res) => {
     });
   }
 });
-    // project save with socket.io
+    // project save with socket.io and notifiaction
 
 app.post("/projects", async (req, res) => {
   try {
@@ -1041,6 +1065,7 @@ app.post("/projects", async (req, res) => {
       });
     }
 
+    // 🔥 1. CREATE PROJECT
     const project = {
       teamName,
       projectTitle,
@@ -1059,42 +1084,57 @@ app.post("/projects", async (req, res) => {
       ...project,
     };
 
-    // 🔥 GET USER
-    const user = await usersCollection.findOne({ email });
+    // 🔥 2. GET ALL ADMINS
+    const admins = await usersCollection
+      .find({ role: "admin" })
+      .toArray();
 
-    // 🔥 ROLE DETERMINE
-    const isAdmin = user?.role === "admin";
+    // ❗ যদি কোনো admin না থাকে
+    if (admins.length === 0) {
+      return res.send({
+        success: true,
+        message: "Project created (no admin to notify)",
+        data: result,
+      });
+    }
 
-    // 🔥 NOTIFICATION LOGIC (IMPORTANT)
-    const notification = {
+    // 🔥 3. CREATE NOTIFICATIONS FOR EACH ADMIN
+    const notifications = admins.map((admin) => ({
       type: "project_created",
       message: "A project created, check for approval",
 
-      // 🎯 WHO WILL SEE THIS
-      role: isAdmin ? "admin" : "user",
-      receiverId: isAdmin ? null : user?._id,
+      receiverId: admin._id, // 🔥 MAIN LOGIC
 
       url: "/admin_dashboard_layout/project_monitoring",
 
       created_by: email,
       created_time: new Date(),
       read: false,
-    };
+    }));
 
-    const savedNotification = await notificationsCollection.insertOne(notification);
+    // 🔥 4. SAVE ALL NOTIFICATIONS
+    const saved = await notificationsCollection.insertMany(notifications);
 
-    const fullNotification = {
-      _id: savedNotification.insertedId,
-      ...notification,
-    };
+    // 🔥 5. REALTIME SOCKET (TARGETED)
+    admins.forEach((admin) => {
+      io.to(admin._id.toString()).emit("newNotification", {
+        type: "project_created",
+        message: "A project created, check for approval",
+        receiverId: admin._id,
+        url: "/admin_dashboard_layout/project_monitoring",
+        created_by: email,
+        created_time: new Date(),
+        read: false,
+      });
+    });
 
-    // 🔥 REALTIME
-    io.emit("newNotification", fullNotification);
+    // 🔥 PROJECT SOCKET (optional)
     io.emit("newProject", newProject);
 
+    // 🔥 RESPONSE
     res.send({
       success: true,
-      message: "Project created successfully",
+      message: "Project created & admins notified",
       data: result,
     });
 
@@ -1135,48 +1175,64 @@ app.post("/projects", async (req, res) => {
 
     // users data save
 
-    app.post("/users", async (req, res) => {
-      try {
-        const { name, email, role } = req.body;
+   app.post("/users", async (req, res) => {
+  try {
+    const { name, email } = req.body;
 
-        if (!email) {
-          return res.status(400).send({
-            success: false,
-            message: "Email is required",
-          });
-        }
+    if (!email) {
+      return res.status(400).send({
+        success: false,
+        message: "Email is required",
+      });
+    }
 
-        const filter = { email };
+    const existingUser = await usersCollection.findOne({ email });
 
-        const updateDoc = {
-          $set: {
-            name: name || "No Name",
-            role: role || "developer", 
-            updatedAt: new Date(),
-          },
-          $setOnInsert: {
-            createdAt: new Date(),
-            isBlocked: false,
-            lastActiveAt: new Date(),
-          },
-        };
+    let updateDoc;
 
-        const result = await usersCollection.updateOne(filter, updateDoc, {
-          upsert: true,
-        });
+    if (existingUser) {
+      // 🔥 ONLY UPDATE NAME + updatedAt
+      updateDoc = {
+        $set: {
+          name: name || existingUser.name || "No Name",
+          updatedAt: new Date(),
+        },
+      };
+    } else {
+      // 🆕 NEW USER
+      updateDoc = {
+        $set: {
+          name: name || "No Name",
+          role: "developer",
+          updatedAt: new Date(),
+        },
+        $setOnInsert: {
+          email,
+          createdAt: new Date(),
+          isBlocked: false,
+          lastActiveAt: new Date(),
+        },
+      };
+    }
 
-        res.send({
-          success: true,
-          message: "User synced successfully",
-          data: result,
-        });
-      } catch (error) {
-        res.status(500).send({
-          success: false,
-          message: error.message,
-        });
-      }
+    const result = await usersCollection.updateOne(
+      { email },
+      updateDoc,
+      { upsert: true }
+    );
+
+    res.send({
+      success: true,
+      message: "User synced successfully",
+      data: result,
     });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
     // update user data as profile update
 
     app.patch("/users/:email", async (req, res) => {
