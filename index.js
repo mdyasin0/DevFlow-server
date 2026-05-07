@@ -303,7 +303,7 @@ app.patch("/projects/:id/status", async (req, res) => {
       message = "Project status updated";
     }
 
-    // 🔥 4. receiver user find (IMPORTANT)
+    // 🔥 4. receiver user find
     const receiverUser = await usersCollection.findOne({
       email: project.created_by,
     });
@@ -315,12 +315,13 @@ app.patch("/projects/:id/status", async (req, res) => {
       });
     }
 
-    // 🔥 5. CLEAN notification object (as you wanted)
+    // 🔥 5. notification object (UPDATED ✅)
     const notification = {
       type: "project_status_updated",
       message,
 
-      receiverId: receiverUser._id,  // 🔥 MAIN TARGET
+      receiverId: receiverUser._id,           // আগের মতোই থাকবে
+      receiverEmail: receiverUser.email,     // 🔥 NEW FIELD
 
       url: "/developer_dashboard/created_project",
 
@@ -337,7 +338,7 @@ app.patch("/projects/:id/status", async (req, res) => {
       ...notification,
     };
 
-    // 🔥 7. socket send to specific user
+    // 🔥 7. socket send
     io.to(receiverUser._id.toString()).emit(
       "newNotification",
       fullNotification
@@ -650,34 +651,69 @@ app.post("/send-email", async (req, res) => {
       }
     });
     // member remove with invite email
-    app.delete("/remove-member/:projectId/:email", async (req, res) => {
-      try {
-        const { projectId, email } = req.params;
+  app.delete("/remove-member/:projectId/:email", async (req, res) => {
+  try {
+    const { projectId, email } = req.params;
 
-        const decodedEmail = decodeURIComponent(email);
+    const decodedEmail = decodeURIComponent(email);
 
-        const result = await projectsCollection.updateOne(
-          { _id: new ObjectId(projectId) },
-          {
-            $pull: {
-              teammember: { email: decodedEmail },
-              invite_email: { email: decodedEmail },
-            },
-          },
-        );
-
-        res.send({
-          success: true,
-          message: "Member removed from team & invites",
-          result,
-        });
-      } catch (error) {
-        res.status(500).send({
-          success: false,
-          message: error.message,
-        });
-      }
+    // 🔥 1. project find (for created_by)
+    const project = await projectsCollection.findOne({
+      _id: new ObjectId(projectId),
     });
+
+    // 🔥 2. remove member (existing logic unchanged)
+    const result = await projectsCollection.updateOne(
+      { _id: new ObjectId(projectId) },
+      {
+        $pull: {
+          teammember: { email: decodedEmail },
+          invite_email: { email: decodedEmail },
+        },
+      }
+    );
+
+    // 🔥 3. receiver user must exist
+    const receiverUser = await usersCollection.findOne({
+      email: decodedEmail,
+    });
+
+    // 🔥 4. notification (NO NULL receiverId)
+    const notification = {
+      type: "removemember",
+      message: "Manager removed you from their team",
+
+      receiverId: receiverUser._id, // 🔥 ALWAYS REQUIRED
+      receiverEmail: receiverUser.email,
+
+      url: "/developer_dashboard/joined_team",
+
+      created_by: project.created_by,
+      created_time: new Date(),
+      read: false,
+    };
+
+    // 🔥 5. save notification
+    await notificationsCollection.insertOne(notification);
+
+    // 🔥 6. realtime
+    io.to(receiverUser._id.toString()).emit(
+      "newNotification",
+      notification
+    );
+
+    res.send({
+      success: true,
+      message: "Member removed from team & invites",
+      result,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
     // remove that invite email which status are inpending or reject
 
     app.delete("/remove-invite/:id/:email", async (req, res) => {
@@ -820,175 +856,225 @@ app.post("/send-email", async (req, res) => {
     });
 
     // Update invitation status (approved/rejected) with add team member if approved
-    app.patch("/invite-status/:projectId", async (req, res) => {
-      try {
-        const { projectId } = req.params;
-        const { email, status, name } = req.body;
+  app.patch("/invite-status/:projectId", async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { email, status, name } = req.body;
 
-        if (!email || !status) {
-          return res.send({ success: false, message: "Missing data" });
-        }
+    if (!email || !status) {
+      return res.send({ success: false, message: "Missing data" });
+    }
 
-        const project = await projectsCollection.findOne({
-          _id: new ObjectId(projectId),
-        });
-
-        const invite = project.invite_email.find(
-          (i) => i.email.toLowerCase() === email.toLowerCase(),
-        );
-
-        if (!invite) {
-          return res.send({
-            success: false,
-            message: "Invitation not found",
-          });
-        }
-
-        // already selected হলে block
-        if (invite.status !== "pending") {
-          return res.send({
-            success: false,
-            message: "You already selected an option",
-          });
-        }
-
-        // 1. update invite status
-        await projectsCollection.updateOne(
-          {
-            _id: new ObjectId(projectId),
-            "invite_email.email": email,
-          },
-          {
-            $set: {
-              "invite_email.$.status": status,
-            },
-          },
-        );
-
-        // 2. যদি approved হয় → teammember এ add
-        if (status === "approved") {
-          await projectsCollection.updateOne(
-            { _id: new ObjectId(projectId) },
-            {
-              $push: {
-                teammember: {
-                  email: email,
-                  name: name,
-                  todo: [],
-                  running: [],
-                  done: [],
-                },
-              },
-            },
-          );
-        }
-
-        res.send({
-          success: true,
-          message: `Invitation ${status}`,
-        });
-      } catch (error) {
-        res.send({
-          success: false,
-          message: error.message,
-        });
-      }
+    const project = await projectsCollection.findOne({
+      _id: new ObjectId(projectId),
     });
+
+    const invite = project.invite_email.find(
+      (i) => i.email.toLowerCase() === email.toLowerCase()
+    );
+
+    if (!invite) {
+      return res.send({
+        success: false,
+        message: "Invitation not found",
+      });
+    }
+
+    // already selected হলে block
+    if (invite.status !== "pending") {
+      return res.send({
+        success: false,
+        message: "You already selected an option",
+      });
+    }
+
+    // 1. update invite status
+    await projectsCollection.updateOne(
+      {
+        _id: new ObjectId(projectId),
+        "invite_email.email": email,
+      },
+      {
+        $set: {
+          "invite_email.$.status": status,
+        },
+      }
+    );
+
+    // 2. যদি approved হয় → teammember এ add
+    if (status === "approved") {
+      await projectsCollection.updateOne(
+        { _id: new ObjectId(projectId) },
+        {
+          $push: {
+            teammember: {
+              email: email,
+              name: name,
+              todo: [],
+              running: [],
+              done: [],
+            },
+          },
+        }
+      );
+    }
+
+    // 🔥 3. NOTIFICATION LOGIC ADD
+
+    // project owner (receiver)
+    const receiverUser = await usersCollection.findOne({
+      email: project.created_by,
+    });
+
+    // message set
+    let message = "";
+    if (status === "approved") {
+      message = "A new member join to our team";
+    } else if (status === "rejected") {
+      message = "User reject your invitation";
+    }
+
+    const notification = {
+      type: "invitation_status_updated",
+      message,
+
+      receiverId: receiverUser?._id || null,
+      receiverEmail: project.created_by,
+
+      url: `/developer_dashboard/created_project_details/${projectId}`,
+
+      created_by: email, // যিনি action নিলেন
+      created_time: new Date(),
+      read: false,
+    };
+
+    await notificationsCollection.insertOne(notification);
+
+    res.send({
+      success: true,
+      message: `Invitation ${status}`,
+    });
+  } catch (error) {
+    res.send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
 
     // invite email send and save email and status
 
     const nodemailer = require("nodemailer");
 
     app.post("/invite/:id", async (req, res) => {
-      try {
-        const projectId = req.params.id;
-        const { email } = req.body;
+  try {
+    const projectId = req.params.id;
+    const { email } = req.body;
 
-        if (!email) {
-          return res.send({ success: false, message: "Email required" });
-        }
+    if (!email) {
+      return res.send({ success: false, message: "Email required" });
+    }
 
-        // 1. project find কর
-        const project = await projectsCollection.findOne({
-          _id: new ObjectId(projectId),
+    // 1. project find
+    const project = await projectsCollection.findOne({
+      _id: new ObjectId(projectId),
+    });
+
+    // 2. check already invited কিনা
+    const existingInvite = project.invite_email.find(
+      (item) => item.email === email
+    );
+
+    if (existingInvite) {
+      if (existingInvite.status === "pending") {
+        return res.send({
+          success: false,
+          message:
+            "Already invitation sent. Please tell your team member to accept the invitation.",
         });
+      }
 
-        // 2. check already invited কিনা
-        const existingInvite = project.invite_email.find(
-          (item) => item.email === email,
-        );
-
-        if (existingInvite) {
-          // status অনুযায়ী message
-          if (existingInvite.status === "pending") {
-            return res.send({
-              success: false,
-              message:
-                "Already invitation sent. Please tell your team member to accept the invitation.",
-            });
-          }
-
-          if (existingInvite.status === "approved") {
-            return res.send({
-              success: false,
-              message: "This member already joined your team.",
-            });
-          }
-
-          if (existingInvite.status === "rejected") {
-            return res.send({
-              success: false,
-              message:
-                "User already rejected the invitation. If you want to send again by this email, delete the email from invitation list first.",
-            });
-          }
-        }
-
-        // 3. DB save
-        await projectsCollection.updateOne(
-          { _id: new ObjectId(projectId) },
-          {
-            $push: {
-              invite_email: {
-                email: email,
-                status: "pending",
-              },
-            },
-          },
-        );
-
-        // 4. email send
-        const transporter = nodemailer.createTransport({
-          service: "gmail",
-          auth: {
-            user: "mdyasin01928364@gmail.com",
-            pass: process.env.EMAIL_PASS,
-          },
+      if (existingInvite.status === "approved") {
+        return res.send({
+          success: false,
+          message: "This member already joined your team.",
         });
+      }
 
-        await transporter.sendMail({
-          from: '"DevFlow" <your_email@gmail.com>',
-          to: email,
-          subject: "Project Invitation",
-          html: `
+      if (existingInvite.status === "rejected") {
+        return res.send({
+          success: false,
+          message:
+            "User already rejected the invitation. If you want to send again by this email, delete the email from invitation list first.",
+        });
+      }
+    }
+
+    // 3. DB save (invite list)
+    await projectsCollection.updateOne(
+      { _id: new ObjectId(projectId) },
+      {
+        $push: {
+          invite_email: {
+            email: email,
+            status: "pending",
+          },
+        },
+      }
+    );
+
+    // 🔥 4. CHECK USER EXIST (for notification)
+    const receiverUser = await usersCollection.findOne({ email });
+
+    // 🔥 5. CREATE NOTIFICATION
+    const notification = {
+      type: "invitation_send",
+      message: "A team manager invited you to their team",
+
+      receiverId: receiverUser?._id || null, // user থাকলে id, না থাকলে null
+      receiverEmail: email, // যাকে invite করা হচ্ছে
+
+      url: "/developer_dashboard/invitations",
+
+      created_by: project.created_by, // project owner email
+      created_time: new Date(),
+      read: false,
+    };
+
+    await notificationsCollection.insertOne(notification);
+
+    // 🔥 6. email send (existing)
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: "mdyasin01928364@gmail.com",
+        pass: process.env.EMAIL_PASS,
+      },
+    });
+
+    await transporter.sendMail({
+      from: '"DevFlow" <your_email@gmail.com>',
+      to: email,
+      subject: "Project Invitation",
+      html: `
         <h3>You have been invited to a project</h3>
         <a href="http://localhost:5173/invite/${projectId}">
           Join Project
         </a>
       `,
-        });
-
-        res.send({
-          success: true,
-          message: "Invite sent & saved",
-        });
-      } catch (error) {
-        res.send({
-          success: false,
-          message: error.message,
-        });
-      }
     });
+
+    res.send({
+      success: true,
+      message: "Invite sent & saved",
+    });
+  } catch (error) {
+    res.send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
 
     // get single project by id
     app.get("/project/:id", async (req, res) => {
@@ -1089,7 +1175,6 @@ app.post("/projects", async (req, res) => {
       .find({ role: "admin" })
       .toArray();
 
-    // ❗ যদি কোনো admin না থাকে
     if (admins.length === 0) {
       return res.send({
         success: true,
@@ -1103,7 +1188,8 @@ app.post("/projects", async (req, res) => {
       type: "project_created",
       message: "A project created, check for approval",
 
-      receiverId: admin._id, // 🔥 MAIN LOGIC
+      receiverId: admin._id,
+      receiverEmail: admin.email, // 🔥 NEW FIELD ADDED
 
       url: "/admin_dashboard_layout/project_monitoring",
 
@@ -1121,6 +1207,7 @@ app.post("/projects", async (req, res) => {
         type: "project_created",
         message: "A project created, check for approval",
         receiverId: admin._id,
+        receiverEmail: admin.email, // 🔥 NEW FIELD ADDED
         url: "/admin_dashboard_layout/project_monitoring",
         created_by: email,
         created_time: new Date(),
