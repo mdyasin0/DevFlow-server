@@ -408,137 +408,246 @@ app.post("/send-email", async (req, res) => {
   }
 });
     // created project update
-    app.put("/projects/:id", async (req, res) => {
-      try {
-        const id = req.params.id;
-        const { teamName, projectTitle ,description} = req.body;
+ app.put("/projects/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { teamName, projectTitle, description } = req.body;
 
-        const filter = { _id: new ObjectId(id) };
-
-        const updateDoc = {
-          $set: {
-            teamName,
-            projectTitle,
-            description,
-          },
-        };
-
-        const result = await projectsCollection.updateOne(filter, updateDoc);
-
-        res.send({
-          success: true,
-          message: "Project updated successfully",
-          data: result,
-        });
-      } catch (error) {
-        res.status(500).send({
-          success: false,
-          message: error.message,
-        });
-      }
+    // 👉 project data আগে নিয়ে আসো
+    const project = await projectsCollection.findOne({
+      _id: new ObjectId(id),
     });
+
+    if (!project) {
+      return res.status(404).send({
+        success: false,
+        message: "Project not found",
+      });
+    }
+
+    const filter = { _id: new ObjectId(id) };
+
+    const updateDoc = {
+      $set: {
+        teamName,
+        projectTitle,
+        description,
+      },
+    };
+
+    const result = await projectsCollection.updateOne(filter, updateDoc);
+
+    // 👉 শুধু team member email (created_by বাদ)
+    const memberEmails = project.teammember.map((m) => m.email);
+
+    // 👉 users collection থেকে সব user আনো
+    const users = await usersCollection
+      .find({ email: { $in: memberEmails } })
+      .toArray();
+
+    // 👉 email → userId map
+    const userMap = {};
+    users.forEach((u) => {
+      userMap[u.email] = u._id;
+    });
+
+    // 👉 bulk notification তৈরি
+    const notifications = memberEmails.map((email) => ({
+      type: "update_team_project_information",
+      message: "Manager updated team project information",
+      receiverId: userMap[email],
+      receiverEmail: email,
+      url: `/developer_dashboard/joined_team_details/${id}`,
+      created_by: project.created_by,
+      created_time: new Date(),
+      read: false,
+    }));
+
+    // 👉 insertMany
+    if (notifications.length > 0) {
+      await notificationsCollection.insertMany(notifications);
+    }
+
+    res.send({
+      success: true,
+      message: "Project updated successfully",
+      data: result,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
     // reopen , move done to running
-    app.patch("/reopen-task/:projectId", async (req, res) => {
-      try {
-        const { projectId } = req.params;
-        const { email, taskId } = req.body;
+  app.patch("/reopen-task/:projectId", async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { email, taskId } = req.body;
 
-        if (!email || !taskId) {
-          return res.send({
-            success: false,
-            message: "Missing required fields",
-          });
-        }
+    if (!email || !taskId) {
+      return res.send({
+        success: false,
+        message: "Missing required fields",
+      });
+    }
 
-        const project = await projectsCollection.findOne({
-          _id: new ObjectId(projectId),
-        });
-
-        if (!project) {
-          return res.send({ success: false, message: "Project not found" });
-        }
-
-        const member = project.teammember.find((m) => m.email === email);
-
-        if (!member) {
-          return res.send({ success: false, message: "Member not found" });
-        }
-
-        // find task in done
-        const task = member.done?.find((t) => t.id === taskId);
-
-        if (!task) {
-          return res.send({
-            success: false,
-            message: "Task not found in done",
-          });
-        }
-
-        // remove from done
-        await projectsCollection.updateOne(
-          { _id: new ObjectId(projectId) },
-          {
-            $pull: {
-              "teammember.$[m].done": { id: taskId },
-            },
-          },
-          { arrayFilters: [{ "m.email": email }] },
-        );
-
-        // remove submittedAt when reopening
-        const updatedTask = { ...task };
-        delete updatedTask.submittedAt;
-
-        // push to running
-        await projectsCollection.updateOne(
-          { _id: new ObjectId(projectId) },
-          {
-            $push: {
-              "teammember.$[m].running": updatedTask,
-            },
-          },
-          { arrayFilters: [{ "m.email": email }] },
-        );
-
-        return res.send({
-          success: true,
-          message: "Task reopened successfully",
-        });
-      } catch (err) {
-        return res.status(500).send({
-          success: false,
-          message: err.message,
-        });
-      }
+    const project = await projectsCollection.findOne({
+      _id: new ObjectId(projectId),
     });
+
+    if (!project) {
+      return res.send({ success: false, message: "Project not found" });
+    }
+
+    const member = project.teammember.find((m) => m.email === email);
+
+    if (!member) {
+      return res.send({ success: false, message: "Member not found" });
+    }
+
+    // 👉 user থেকে receiverId আনো
+    const user = await usersCollection.findOne({ email: email });
+
+    // 👉 find task in done
+    const task = member.done?.find((t) => t.id === taskId);
+
+    if (!task) {
+      return res.send({
+        success: false,
+        message: "Task not found in done",
+      });
+    }
+
+    // 👉 remove from done
+    await projectsCollection.updateOne(
+      { _id: new ObjectId(projectId) },
+      {
+        $pull: {
+          "teammember.$[m].done": { id: taskId },
+        },
+      },
+      { arrayFilters: [{ "m.email": email }] }
+    );
+
+    // 👉 remove submittedAt when reopening
+    const updatedTask = { ...task };
+    delete updatedTask.submittedAt;
+
+    // 👉 push to running
+    await projectsCollection.updateOne(
+      { _id: new ObjectId(projectId) },
+      {
+        $push: {
+          "teammember.$[m].running": updatedTask,
+        },
+      },
+      { arrayFilters: [{ "m.email": email }] }
+    );
+
+    // 👉 notification তৈরি
+    const notification = {
+      type: "reopened_task",
+      message:
+        "Manager reopen your task and your task moved from done to running status",
+      receiverId: user?._id,
+      receiverEmail: email,
+      url: `/developer_dashboard/joined_team_details/${projectId}`, // ✅ dynamic
+      created_by: project.created_by,
+      created_time: new Date(),
+      read: false,
+    };
+
+    await notificationsCollection.insertOne(notification);
+
+    return res.send({
+      success: true,
+      message: "Task reopened successfully",
+    });
+  } catch (err) {
+    return res.status(500).send({
+      success: false,
+      message: err.message,
+    });
+  }
+});
     // delete project
 
-    app.delete("/projects/:id", async (req, res) => {
-      try {
-        const id = req.params.id;
+  app.delete("/projects/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
 
-        const result = await projectsCollection.deleteOne({
-          _id: new ObjectId(id),
-        });
-
-        if (result.deletedCount === 1) {
-          return res.send({
-            success: true,
-            message: "Project deleted successfully",
-          });
-        }
-
-        res.status(404).send({
-          success: false,
-          message: "Project not found",
-        });
-      } catch (error) {
-        res.status(500).send({
-          success: false,
-          message: error.message,
-        });
-      }
+    // 👉 project data আগে নিয়ে আসো
+    const project = await projectsCollection.findOne({
+      _id: new ObjectId(id),
     });
+
+    if (!project) {
+      return res.status(404).send({
+        success: false,
+        message: "Project not found",
+      });
+    }
+
+    // 👉 delete project
+    const result = await projectsCollection.deleteOne({
+      _id: new ObjectId(id),
+    });
+
+    if (result.deletedCount === 1) {
+      // 👉 team member list থেকে created_by বাদ দাও
+      const members = project.teammember.filter(
+        (m) => m.email !== project.created_by
+      );
+
+      // 👉 সব member এর user data একসাথে আনো
+      const emails = members.map((m) => m.email);
+
+      const users = await usersCollection
+        .find({ email: { $in: emails } })
+        .toArray();
+
+      // 👉 email → user map বানাও
+      const userMap = {};
+      users.forEach((u) => {
+        userMap[u.email] = u._id;
+      });
+
+      // 👉 bulk notification array বানাও
+      const notifications = members.map((member) => ({
+        type: "team_project_delete",
+        message: "Manager delete the team project",
+        receiverId: userMap[member.email],
+        receiverEmail: member.email,
+        url: "/developer_dashboard/joined_team",
+        created_by: project.created_by,
+        created_time: new Date(),
+        read: false,
+      }));
+
+      // 👉 একবারে insert (performance better 🚀)
+      if (notifications.length > 0) {
+        await notificationsCollection.insertMany(notifications);
+      }
+
+      return res.send({
+        success: true,
+        message: "Project deleted successfully",
+      });
+    }
+
+    res.status(404).send({
+      success: false,
+      message: "Project not found",
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
     // tasks status change
     app.patch("/move-task/:projectId", async (req, res) => {
       try {
@@ -739,98 +848,200 @@ app.post("/send-email", async (req, res) => {
     });
     // UPDATE task
     app.patch("/update-task/:projectId", async (req, res) => {
-      try {
-        const { projectId } = req.params;
-        const { email, type, taskId, text } = req.body;
+  try {
+    const { projectId } = req.params;
+    const { email, type, taskId, text } = req.body;
 
-        const result = await projectsCollection.updateOne(
-          { _id: new ObjectId(projectId) },
-          {
-            $set: {
-              [`teammember.$[m].${type}.$[t].text`]: text.replace(
-                /\n/g,
-                "<br/>",
-              ),
-            },
-          },
-          {
-            arrayFilters: [{ "m.email": email }, { "t.id": taskId }],
-          },
-        );
-
-        res.send({ success: true, message: "Updated" });
-      } catch (err) {
-        res.send({ success: false, message: err.message });
-      }
+    // 👉 project data (created_by দরকার)
+    const project = await projectsCollection.findOne({
+      _id: new ObjectId(projectId),
     });
+
+    if (!project) {
+      return res.send({
+        success: false,
+        message: "Project not found",
+      });
+    }
+
+    // 👉 user থেকে receiverId আনো
+    const user = await usersCollection.findOne({ email: email });
+
+    // 👉 task update
+    const result = await projectsCollection.updateOne(
+      { _id: new ObjectId(projectId) },
+      {
+        $set: {
+          [`teammember.$[m].${type}.$[t].text`]: text.replace(
+            /\n/g,
+            "<br/>"
+          ),
+        },
+      },
+      {
+        arrayFilters: [{ "m.email": email }, { "t.id": taskId }],
+      }
+    );
+
+    // 👉 notification তৈরি
+    const notification = {
+      type: "updated_task",
+      message: "Manager update your task",
+      receiverId: user?._id,
+      receiverEmail: email,
+      url: `/developer_dashboard/joined_team_details/${projectId}`,
+      created_by: project.created_by,
+      created_time: new Date(),
+      read: false,
+    };
+
+    await notificationsCollection.insertOne(notification);
+
+    res.send({ success: true, message: "Updated" });
+  } catch (err) {
+    res.send({ success: false, message: err.message });
+  }
+});
     // DELETE task
-    app.delete("/delete-task/:projectId", async (req, res) => {
-      try {
-        const { projectId } = req.params;
-        const { email, type, taskId } = req.body;
+ app.delete("/delete-task/:projectId", async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { email, type, taskId } = req.body;
 
-        const result = await projectsCollection.updateOne(
-          { _id: new ObjectId(projectId) },
-          {
-            $pull: {
-              [`teammember.$[m].${type}`]: { id: taskId },
-            },
-          },
-          {
-            arrayFilters: [{ "m.email": email }],
-          },
-        );
-
-        res.send({ success: true, message: "Deleted" });
-      } catch (err) {
-        res.send({ success: false, message: err.message });
-      }
+    // 👉 project data আনো (created_by দরকার)
+    const project = await projectsCollection.findOne({
+      _id: new ObjectId(projectId),
     });
+
+    if (!project) {
+      return res.send({
+        success: false,
+        message: "Project not found",
+      });
+    }
+
+    // 👉 user থেকে receiverId আনো
+    const user = await usersCollection.findOne({ email: email });
+
+    // 👉 task delete
+    const result = await projectsCollection.updateOne(
+      { _id: new ObjectId(projectId) },
+      {
+        $pull: {
+          [`teammember.$[m].${type}`]: { id: taskId },
+        },
+      },
+      {
+        arrayFilters: [{ "m.email": email }],
+      }
+    );
+
+    // 👉 notification তৈরি
+    const notification = {
+      type: "task_delete",
+      message: "Manager delete your task",
+      receiverId: user?._id,
+      receiverEmail: email,
+      url: `/developer_dashboard/joined_team_details/${projectId}`,
+      created_by: project.created_by,
+      created_time: new Date(),
+      read: false,
+    };
+
+    await notificationsCollection.insertOne(notification);
+
+    res.send({ success: true, message: "Deleted" });
+  } catch (err) {
+    res.send({ success: false, message: err.message });
+  }
+});
     // work assign
-    app.patch("/add-task/:projectId", async (req, res) => {
-      try {
-        const { projectId } = req.params;
-        const { email, text, deadline, priority } = req.body;
+  app.patch("/add-task/:projectId", async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { email, text, deadline, priority } = req.body;
 
-        if (!email || !text || !deadline || !priority) {
-          return res.send({
-            success: false,
-            message: "Missing data",
-          });
-        }
+    if (!email || !text || !deadline || !priority) {
+      return res.send({
+        success: false,
+        message: "Missing data",
+      });
+    }
 
-        const newTask = {
-          id: Date.now().toString(),
-          text,
-          deadline: new Date(deadline),
-          priority,
-          createdAt: new Date(),
-        };
+    const newTask = {
+      id: Date.now().toString(),
+      text,
+      deadline: new Date(deadline),
+      priority,
+      createdAt: new Date(),
+    };
 
-        const result = await projectsCollection.updateOne(
-          {
-            _id: new ObjectId(projectId),
-            "teammember.email": email,
-          },
-          {
-            $push: {
-              "teammember.$.todo": newTask,
-            },
-          },
-        );
-
-        res.send({
-          success: true,
-          message: "Task added successfully",
-          data: newTask,
-        });
-      } catch (error) {
-        res.send({
-          success: false,
-          message: error.message,
-        });
-      }
+    // 👉 project data get (notification এর জন্য)
+    const project = await projectsCollection.findOne({
+      _id: new ObjectId(projectId),
     });
+
+    if (!project) {
+      return res.send({
+        success: false,
+        message: "Project not found",
+      });
+    }
+
+    // 👉 assigned member find
+    const assignedMember = project.teammember.find(
+      (member) => member.email === email
+    );
+
+    if (!assignedMember) {
+      return res.send({
+        success: false,
+        message: "Member not found",
+      });
+    }
+
+    // 👉 user collection থেকে receiverId আনো
+    const user = await usersCollection.findOne({ email: email });
+
+    // 👉 task add
+    const result = await projectsCollection.updateOne(
+      {
+        _id: new ObjectId(projectId),
+        "teammember.email": email,
+      },
+      {
+        $push: {
+          "teammember.$.todo": newTask,
+        },
+      }
+    );
+
+    // 👉 notification তৈরি
+    const notification = {
+      type: "work_assign",
+      message: "Manager assigned a new task",
+      receiverId: user?._id,
+      receiverEmail: email,
+      url: `/developer_dashboard/joined_team_details/${projectId}`,
+      created_by: project.created_by,
+      created_time: new Date(),
+      read: false,
+    };
+
+    await notificationsCollection.insertOne(notification);
+
+    res.send({
+      success: true,
+      message: "Task added successfully",
+      data: newTask,
+    });
+  } catch (error) {
+    res.send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
 
     // GET invited projects by user email
     app.get("/my-invitations/:email", async (req, res) => {
@@ -1119,17 +1330,102 @@ app.post("/send-email", async (req, res) => {
     });
   }
 });
-// get all notifications (no role filter)
+// get notifications by user id
 app.get("/notifications", async (req, res) => {
   try {
+    const email = req.query.email; // login user email
+
+    if (!email) {
+      return res.send({
+        success: false,
+        message: "Email is required",
+      });
+    }
+
+    // 👉 user collection থেকে user বের করো
+    const user = await usersCollection.findOne({ email });
+
+    if (!user) {
+      return res.send({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // 👉 userId দিয়ে notification filter
     const notifications = await notificationsCollection
-      .find()
+      .find({ receiverId: user._id })
       .sort({ created_time: -1 })
       .toArray();
 
     res.send({
       success: true,
       data: notifications,
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+// toggle nptification read /unread
+app.patch("/notifications/:id/toggle-read", async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const notification = await notificationsCollection.findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!notification) {
+      return res.send({
+        success: false,
+        message: "Notification not found",
+      });
+    }
+
+    const result = await notificationsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          read: !notification.read,
+        },
+      }
+    );
+
+    res.send({
+      success: true,
+      message: notification.read
+        ? "Marked as unread"
+        : "Marked as read",
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+// DELETE NOTIFICATION
+app.delete("/notifications/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const result = await notificationsCollection.deleteOne({
+      _id: new ObjectId(id),
+    });
+
+    if (result.deletedCount === 0) {
+      return res.send({
+        success: false,
+        message: "Notification not found",
+      });
+    }
+
+    res.send({
+      success: true,
+      message: "Notification deleted successfully",
     });
   } catch (error) {
     res.status(500).send({
