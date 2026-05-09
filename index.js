@@ -24,7 +24,10 @@ socket.on("join", (userId) => {
   socket.join(userId.toString());
   console.log("User joined room:", userId);
 });
-
+  socket.on("joinProject", (projectId) => {
+    socket.join(projectId.toString());
+    console.log("Joined project room:", projectId);
+  });
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
   });
@@ -338,12 +341,13 @@ app.patch("/projects/:id/status", async (req, res) => {
       ...notification,
     };
 
-    // 🔥 7. socket send
-    io.to(receiverUser._id.toString()).emit(
-      "newNotification",
-      fullNotification
-    );
-
+ 
+io.to(receiverUser._id.toString()).emit("project_status_updated", {
+  projectId: id,
+  status,
+});
+console.log("USER ROOM:", receiverUser._id.toString());
+console.log("EMITTING STATUS:", status);
     res.send({
       success: true,
       message: `Project ${status} successfully`,
@@ -560,7 +564,15 @@ app.post("/send-email", async (req, res) => {
     };
 
     await notificationsCollection.insertOne(notification);
-
+    // 🔥 REAL-TIME SOCKET ADDED (ONLY THIS PART NEW)
+    io.to(user._id.toString()).emit("newNotification", {
+      _id: notification._id,
+      ...notification,
+    });
+    // 🔥 REAL-TIME PROJECT UPDATE (IMPORTANT FIX)
+io.to(projectId).emit("projectUpdated", {
+  projectId,
+});
     return res.send({
       success: true,
       message: "Task reopened successfully",
@@ -574,11 +586,10 @@ app.post("/send-email", async (req, res) => {
 });
     // delete project
 
-  app.delete("/projects/:id", async (req, res) => {
+app.delete("/projects/:id", async (req, res) => {
   try {
     const id = req.params.id;
 
-    // 👉 project data আগে নিয়ে আসো
     const project = await projectsCollection.findOne({
       _id: new ObjectId(id),
     });
@@ -590,31 +601,26 @@ app.post("/send-email", async (req, res) => {
       });
     }
 
-    // 👉 delete project
     const result = await projectsCollection.deleteOne({
       _id: new ObjectId(id),
     });
 
     if (result.deletedCount === 1) {
-      // 👉 team member list থেকে created_by বাদ দাও
       const members = project.teammember.filter(
         (m) => m.email !== project.created_by
       );
 
-      // 👉 সব member এর user data একসাথে আনো
       const emails = members.map((m) => m.email);
 
       const users = await usersCollection
         .find({ email: { $in: emails } })
         .toArray();
 
-      // 👉 email → user map বানাও
       const userMap = {};
       users.forEach((u) => {
         userMap[u.email] = u._id;
       });
 
-      // 👉 bulk notification array বানাও
       const notifications = members.map((member) => ({
         type: "team_project_delete",
         message: "Manager delete the team project",
@@ -626,11 +632,25 @@ app.post("/send-email", async (req, res) => {
         read: false,
       }));
 
-      // 👉 একবারে insert (performance better 🚀)
       if (notifications.length > 0) {
         await notificationsCollection.insertMany(notifications);
       }
 
+      // 🔥 SOCKET PART (NEW ADDED)
+      members.forEach((member) => {
+        const receiverId = userMap[member.email];
+
+        if (receiverId) {
+          io.to(receiverId.toString()).emit("projectDeleted", {
+            projectId: id,
+            message: "A project has been deleted",
+          });
+
+        }
+      });
+io.emit("projectDeleted", {
+  projectId: id,
+});
       return res.send({
         success: true,
         message: "Project deleted successfully",
@@ -725,7 +745,13 @@ app.post("/send-email", async (req, res) => {
           },
           { arrayFilters: [{ "m.email": email }] },
         );
+// 🔥 NEW PART START
+const updatedProject = await projectsCollection.findOne({
+  _id: new ObjectId(projectId),
+});
 
+io.to(projectId).emit("projectUpdated", updatedProject);
+// 🔥 NEW PART END
         return res.send({
           success: true,
           message: "Task moved successfully",
@@ -760,18 +786,15 @@ app.post("/send-email", async (req, res) => {
       }
     });
     // member remove with invite email
-  app.delete("/remove-member/:projectId/:email", async (req, res) => {
+app.delete("/remove-member/:projectId/:email", async (req, res) => {
   try {
     const { projectId, email } = req.params;
-
     const decodedEmail = decodeURIComponent(email);
 
-    // 🔥 1. project find (for created_by)
     const project = await projectsCollection.findOne({
       _id: new ObjectId(projectId),
     });
 
-    // 🔥 2. remove member (existing logic unchanged)
     const result = await projectsCollection.updateOne(
       { _id: new ObjectId(projectId) },
       {
@@ -782,40 +805,40 @@ app.post("/send-email", async (req, res) => {
       }
     );
 
-    // 🔥 3. receiver user must exist
     const receiverUser = await usersCollection.findOne({
       email: decodedEmail,
     });
 
-    // 🔥 4. notification (NO NULL receiverId)
     const notification = {
       type: "removemember",
       message: "Manager removed you from their team",
-
-      receiverId: receiverUser._id, // 🔥 ALWAYS REQUIRED
+      receiverId: receiverUser._id,
       receiverEmail: receiverUser.email,
-
       url: "/developer_dashboard/joined_team",
-
       created_by: project.created_by,
       created_time: new Date(),
       read: false,
     };
 
-    // 🔥 5. save notification
     await notificationsCollection.insertOne(notification);
 
-    // 🔥 6. realtime
     io.to(receiverUser._id.toString()).emit(
       "newNotification",
       notification
     );
 
+    // 🔥 REALTIME PROJECT UPDATE (MAIN FIX)
+    const updatedProject = await projectsCollection.findOne({
+      _id: new ObjectId(projectId),
+    });
+
+    io.to(projectId.toString()).emit("projectUpdated", updatedProject);
+
     res.send({
       success: true,
-      message: "Member removed from team & invites",
-      result,
+      message: "Member removed",
     });
+
   } catch (error) {
     res.status(500).send({
       success: false,
@@ -847,7 +870,7 @@ app.post("/send-email", async (req, res) => {
       }
     });
     // UPDATE task
-    app.patch("/update-task/:projectId", async (req, res) => {
+app.patch("/update-task/:projectId", async (req, res) => {
   try {
     const { projectId } = req.params;
     const { email, type, taskId, text } = req.body;
@@ -895,15 +918,23 @@ app.post("/send-email", async (req, res) => {
       read: false,
     };
 
-    await notificationsCollection.insertOne(notification);
+    const savedNotification = await notificationsCollection.insertOne(notification);
 
+    // 🚀 ONLY ADD (REALTIME SOCKET)
+    io.to(user._id.toString()).emit("newNotification", {
+      _id: savedNotification.insertedId,
+      ...notification,
+    });
+io.to(projectId).emit("projectUpdated", {
+  projectId,
+});
     res.send({ success: true, message: "Updated" });
   } catch (err) {
     res.send({ success: false, message: err.message });
   }
 });
     // DELETE task
- app.delete("/delete-task/:projectId", async (req, res) => {
+app.delete("/delete-task/:projectId", async (req, res) => {
   try {
     const { projectId } = req.params;
     const { email, type, taskId } = req.body;
@@ -948,15 +979,26 @@ app.post("/send-email", async (req, res) => {
       read: false,
     };
 
-    await notificationsCollection.insertOne(notification);
+    const savedNotification = await notificationsCollection.insertOne(notification);
 
+    // 🔥 ONLY ADD THIS (REALTIME SOCKET)
+    io.to(user?._id?.toString()).emit("newNotification", {
+      _id: savedNotification.insertedId,
+      ...notification,
+    });
+    io.to(projectId).emit("projectUpdated", {
+      type: "task_deleted",
+      taskId,
+      email,
+    });
     res.send({ success: true, message: "Deleted" });
+
   } catch (err) {
     res.send({ success: false, message: err.message });
   }
 });
     // work assign
-  app.patch("/add-task/:projectId", async (req, res) => {
+ app.patch("/add-task/:projectId", async (req, res) => {
   try {
     const { projectId } = req.params;
     const { email, text, deadline, priority } = req.body;
@@ -976,7 +1018,6 @@ app.post("/send-email", async (req, res) => {
       createdAt: new Date(),
     };
 
-    // 👉 project data get (notification এর জন্য)
     const project = await projectsCollection.findOne({
       _id: new ObjectId(projectId),
     });
@@ -988,7 +1029,6 @@ app.post("/send-email", async (req, res) => {
       });
     }
 
-    // 👉 assigned member find
     const assignedMember = project.teammember.find(
       (member) => member.email === email
     );
@@ -1000,10 +1040,8 @@ app.post("/send-email", async (req, res) => {
       });
     }
 
-    // 👉 user collection থেকে receiverId আনো
     const user = await usersCollection.findOne({ email: email });
 
-    // 👉 task add
     const result = await projectsCollection.updateOne(
       {
         _id: new ObjectId(projectId),
@@ -1016,7 +1054,6 @@ app.post("/send-email", async (req, res) => {
       }
     );
 
-    // 👉 notification তৈরি
     const notification = {
       type: "work_assign",
       message: "Manager assigned a new task",
@@ -1028,8 +1065,23 @@ app.post("/send-email", async (req, res) => {
       read: false,
     };
 
-    await notificationsCollection.insertOne(notification);
+    // 🔥 1. SAVE (same as before)
+    const saved = await notificationsCollection.insertOne(notification);
 
+    // 🔥 2. REALTIME SOCKET ADD (ONLY NEW PART)
+    const fullNotification = {
+      _id: saved.insertedId,
+      ...notification,
+    };
+
+    io.to(user?._id.toString()).emit(
+      "newNotification",
+      fullNotification
+    );
+io.to(projectId).emit("projectUpdated", {
+  projectId,
+});
+    // 🔥 response same
     res.send({
       success: true,
       message: "Task added successfully",
@@ -1067,7 +1119,7 @@ app.post("/send-email", async (req, res) => {
     });
 
     // Update invitation status (approved/rejected) with add team member if approved
-  app.patch("/invite-status/:projectId", async (req, res) => {
+ app.patch("/invite-status/:projectId", async (req, res) => {
   try {
     const { projectId } = req.params;
     const { email, status, name } = req.body;
@@ -1130,14 +1182,12 @@ app.post("/send-email", async (req, res) => {
       );
     }
 
-    // 🔥 3. NOTIFICATION LOGIC ADD
+    // 🔥 3. NOTIFICATION LOGIC (UNCHANGED)
 
-    // project owner (receiver)
     const receiverUser = await usersCollection.findOne({
       email: project.created_by,
     });
 
-    // message set
     let message = "";
     if (status === "approved") {
       message = "A new member join to our team";
@@ -1154,12 +1204,33 @@ app.post("/send-email", async (req, res) => {
 
       url: `/developer_dashboard/created_project_details/${projectId}`,
 
-      created_by: email, // যিনি action নিলেন
+      created_by: email,
       created_time: new Date(),
       read: false,
     };
 
-    await notificationsCollection.insertOne(notification);
+    // 🔥 4. SAVE
+    const result = await notificationsCollection.insertOne(notification);
+
+    // 🔥 5. REALTIME SOCKET (ADDED ✅ ONLY THIS PART)
+    if (receiverUser?._id) {
+      const fullNotification = {
+        _id: result.insertedId, // 🔥 important
+        ...notification,
+      };
+
+      io.to(receiverUser._id.toString()).emit(
+        "newNotification",
+        fullNotification
+      );
+    }
+    // 🔥 6. REALTIME PROJECT UPDATE (NEW ADD)
+const updatedProject = await projectsCollection.findOne({
+  _id: new ObjectId(projectId),
+});
+
+// যাদের project page open আছে সবাই update পাবে
+io.to(projectId.toString()).emit("projectUpdated", updatedProject);
 
     res.send({
       success: true,
@@ -1177,7 +1248,7 @@ app.post("/send-email", async (req, res) => {
 
     const nodemailer = require("nodemailer");
 
-    app.post("/invite/:id", async (req, res) => {
+ app.post("/invite/:id", async (req, res) => {
   try {
     const projectId = req.params.id;
     const { email } = req.body;
@@ -1242,19 +1313,38 @@ app.post("/send-email", async (req, res) => {
       type: "invitation_send",
       message: "A team manager invited you to their team",
 
-      receiverId: receiverUser?._id || null, // user থাকলে id, না থাকলে null
-      receiverEmail: email, // যাকে invite করা হচ্ছে
+      receiverId: receiverUser?._id || null,
+      receiverEmail: email,
 
       url: "/developer_dashboard/invitations",
 
-      created_by: project.created_by, // project owner email
+      created_by: project.created_by,
       created_time: new Date(),
       read: false,
     };
 
-    await notificationsCollection.insertOne(notification);
+    const result = await notificationsCollection.insertOne(notification);
 
-    // 🔥 6. email send (existing)
+    // ✅🔥 6. REALTIME SOCKET ADD (ONLY THIS PART NEW)
+    if (receiverUser?._id) {
+      const fullNotification = {
+        _id: result.insertedId, // 🔥 IMPORTANT
+        ...notification,
+      };
+
+      io.to(receiverUser._id.toString()).emit(
+        "newNotification",
+        fullNotification
+      );
+    }
+ // 🔥 EXTRA (IMPORTANT FOR INVITATION PAGE REALTIME)
+io.to(receiverUser._id.toString()).emit("newInvitation", {
+  projectId,
+  email,
+  status: "pending",
+  created_time: new Date(),
+});
+    // 🔥 7. email send (existing)
     const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: {
@@ -1479,13 +1569,13 @@ app.post("/projects", async (req, res) => {
       });
     }
 
-    // 🔥 3. CREATE NOTIFICATIONS FOR EACH ADMIN
+    // 🔥 3. CREATE NOTIFICATIONS
     const notifications = admins.map((admin) => ({
       type: "project_created",
       message: "A project created, check for approval",
 
       receiverId: admin._id,
-      receiverEmail: admin.email, // 🔥 NEW FIELD ADDED
+      receiverEmail: admin.email,
 
       url: "/admin_dashboard_layout/project_monitoring",
 
@@ -1497,21 +1587,24 @@ app.post("/projects", async (req, res) => {
     // 🔥 4. SAVE ALL NOTIFICATIONS
     const saved = await notificationsCollection.insertMany(notifications);
 
-    // 🔥 5. REALTIME SOCKET (TARGETED)
-    admins.forEach((admin) => {
-      io.to(admin._id.toString()).emit("newNotification", {
-        type: "project_created",
-        message: "A project created, check for approval",
-        receiverId: admin._id,
-        receiverEmail: admin.email, // 🔥 NEW FIELD ADDED
-        url: "/admin_dashboard_layout/project_monitoring",
-        created_by: email,
-        created_time: new Date(),
-        read: false,
-      });
-    });
+    // 🔥 5. REALTIME SOCKET (FIXED ✅)
+    saved.insertedIds &&
+      Object.values(saved.insertedIds).forEach((id, index) => {
+        const admin = admins[index];
 
-    // 🔥 PROJECT SOCKET (optional)
+        const fullNotification = {
+          _id: id, // 🔥 IMPORTANT (DB ID)
+          ...notifications[index],
+        };
+
+        // 👉 targeted user room এ send
+        io.to(admin._id.toString()).emit(
+          "newNotification",
+          fullNotification
+        );
+      });
+
+    // 🔥 OPTIONAL: project realtime
     io.emit("newProject", newProject);
 
     // 🔥 RESPONSE
