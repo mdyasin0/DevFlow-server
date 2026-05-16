@@ -73,8 +73,9 @@ async function run() {
     usersCollection = database.collection("users");
     const projectsCollection = database.collection("projects");
     const notificationsCollection = database.collection("notifications");
-
+const projectMessagesCollection = database.collection("projectMessages");
     const { ObjectId } = require("mongodb");
+  
 // jwt token create
 app.post("/jwt", async (req, res) => {
   try {
@@ -186,6 +187,167 @@ const verifyToken = (req, res, next) => {
     next();
   });
 };
+// check is user bloack in every api call
+const checkBlockedUser = async (req, res, next) => {
+  try {
+    const email = req.user?.email;
+
+    if (!email) {
+      return res.status(401).send({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    const user = await usersCollection.findOne({ email });
+
+    if (!user) {
+      return res.status(404).send({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // 🔥 BLOCK CHECK + AUTO LOGOUT STYLE
+    if (user.isBlocked) {
+      // 👉 cookie clear (same as logout API)
+      res.clearCookie("token", {
+        httpOnly: true,
+        sameSite: "strict",
+        secure: false,
+      });
+
+      return res.status(403).send({
+        success: false,
+        message: "You are blocked",
+        isBlocked: true,
+      });
+    }
+
+    next();
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+  // massage save 
+    app.post("/project-message", verifyToken, async (req, res) => {
+  try {
+    const { projectId, message, senderEmail, senderName } = req.body;
+
+    if (!projectId || !message) {
+      return res.status(400).send({ success: false });
+    }
+
+    const newMessage = {
+      projectId,
+      senderEmail,
+      senderName,
+      message,
+      createdAt: new Date(),
+    };
+
+    const result = await projectMessagesCollection.insertOne(newMessage);
+
+    const fullMessage = {
+      _id: result.insertedId,
+      ...newMessage,
+    };
+
+    // 🔥 realtime
+    io.to(projectId).emit("newMessage", fullMessage);
+
+    res.send({ success: true, data: fullMessage });
+  } catch (err) {
+    res.status(500).send({ success: false });
+  }
+});
+app.get("/project-message/:projectId", verifyToken, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+
+    const messages = await projectMessagesCollection
+      .find({ projectId })
+      .sort({ createdAt: 1 })
+      .toArray();
+
+    res.send({ success: true, data: messages });
+  } catch (err) {
+    res.status(500).send({ success: false });
+  }
+});
+// edite massge 
+app.patch("/project-message/:id", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { message } = req.body;
+    const userEmail = req.user.email;
+
+    const existing = await projectMessagesCollection.findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!existing) {
+      return res.status(404).send({ success: false });
+    }
+
+    if (existing.senderEmail !== userEmail) {
+      return res.status(403).send({ success: false });
+    }
+
+    await projectMessagesCollection.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          message,
+          edited: true,
+        },
+      }
+    );
+
+    const updated = await projectMessagesCollection.findOne({
+      _id: new ObjectId(id),
+    });
+
+    // 🔥 realtime
+    io.to(existing.projectId).emit("updateMessage", updated);
+
+    res.send({ success: true, data: updated });
+  } catch (err) {
+    res.status(500).send({ success: false });
+  }
+});
+// delete massage
+app.delete("/project-message/:id", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userEmail = req.user.email;
+
+    const message = await projectMessagesCollection.findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!message) {
+      return res.status(404).send({ success: false });
+    }
+
+    // ❌ অন্য কেউ delete করতে পারবে না
+    if (message.senderEmail !== userEmail) {
+      return res.status(403).send({ success: false, message: "Not allowed" });
+    }
+
+    await projectMessagesCollection.deleteOne({ _id: new ObjectId(id) });
+
+    // 🔥 realtime
+    io.to(message.projectId).emit("deleteMessage", id);
+
+    res.send({ success: true });
+  } catch (err) {
+    res.status(500).send({ success: false });
+  }
+});
 // token remove if logout
 app.post("/logout", (req, res) => {
   res.clearCookie("token", {
@@ -197,7 +359,7 @@ app.post("/logout", (req, res) => {
   res.send({ success: true });
 });
     // user bloack
-    app.patch("/users/block/:id",verifyToken,updateLastActive, async (req, res) => {
+    app.patch("/users/block/:id", async (req, res) => {
       try {
         const id = req.params.id;
 
@@ -225,7 +387,7 @@ app.post("/logout", (req, res) => {
     });
 
     // user unbloack
-    app.patch("/users/unblock/:id",verifyToken,updateLastActive, async (req, res) => {
+    app.patch("/users/unblock/:id", async (req, res) => {
       try {
         const id = req.params.id;
 
@@ -252,7 +414,7 @@ app.post("/logout", (req, res) => {
       }
     });
     // users role change
-    app.patch("/users/role/:id",verifyToken,updateLastActive, async (req, res) => {
+    app.patch("/users/role/:id",verifyToken,checkBlockedUser,updateLastActive, async (req, res) => {
       try {
         const id = req.params.id;
         const { role } = req.body;
@@ -278,7 +440,7 @@ app.post("/logout", (req, res) => {
     });
 
     // user data get by email
-    app.get("/users/:email", async (req, res) => {
+    app.get("/users/:email"  , async (req, res) => {
       try {
         const email = req.params.email;
 
@@ -303,7 +465,7 @@ app.post("/logout", (req, res) => {
       }
     });
     // all not block user get
-    app.get("/approved_users",verifyToken,updateLastActive, async (req, res) => {
+    app.get("/approved_users",verifyToken,checkBlockedUser,updateLastActive, async (req, res) => {
       try {
         const users = await usersCollection
           .find({ isBlocked: false })
@@ -322,7 +484,7 @@ app.post("/logout", (req, res) => {
     });
     // send email all inactive users
 
-    app.post("/email/send-inactive",verifyToken,updateLastActive, async (req, res) => {
+    app.post("/email/send-inactive",verifyToken,checkBlockedUser,updateLastActive, async (req, res) => {
       try {
         const { subject, message } = req.body;
 
@@ -367,7 +529,7 @@ app.post("/logout", (req, res) => {
       }
     });
     // all users
-    app.get("/users",verifyToken,updateLastActive, async (req, res) => {
+    app.get("/users",verifyToken,checkBlockedUser,updateLastActive, async (req, res) => {
       try {
         const users = await usersCollection.find().toArray();
 
@@ -383,7 +545,7 @@ app.post("/logout", (req, res) => {
       }
     });
     // project status update notification save socket .io added
-    app.patch("/projects/:id/status",verifyToken,updateLastActive, async (req, res) => {
+    app.patch("/projects/:id/status",verifyToken,checkBlockedUser,updateLastActive, async (req, res) => {
       try {
         const id = req.params.id;
         const { status, updatedBy } = req.body;
@@ -485,7 +647,7 @@ app.post("/logout", (req, res) => {
       }
     });
     // all projects
-    app.get("/projects",verifyToken,updateLastActive, async (req, res) => {
+    app.get("/projects",verifyToken,checkBlockedUser,updateLastActive, async (req, res) => {
       try {
         const projects = await projectsCollection.find().toArray();
 
@@ -502,7 +664,7 @@ app.post("/logout", (req, res) => {
     });
     // Send Email API (Nodemailer)
 
-    app.post("/send-email",verifyToken,updateLastActive, async (req, res) => {
+    app.post("/send-email",verifyToken,checkBlockedUser,updateLastActive, async (req, res) => {
       try {
         const { emails, subject, message } = req.body;
 
@@ -535,7 +697,7 @@ app.post("/logout", (req, res) => {
       }
     });
     // created project update
-    app.put("/projects/:id", verifyToken,updateLastActive, async (req, res) => {
+    app.put("/projects/:id", verifyToken,checkBlockedUser,updateLastActive, async (req, res) => {
       try {
         const id = req.params.id;
         const { teamName, projectTitle, description } = req.body;
@@ -608,7 +770,7 @@ app.post("/logout", (req, res) => {
       }
     });
     // reopen , move done to running
-    app.patch("/reopen-task/:projectId", verifyToken,updateLastActive, async (req, res) => {
+    app.patch("/reopen-task/:projectId", verifyToken,checkBlockedUser,updateLastActive, async (req, res) => {
       try {
         const { projectId } = req.params;
         const { email, taskId } = req.body;
@@ -709,7 +871,7 @@ app.post("/logout", (req, res) => {
     });
     // delete project
 
-    app.delete("/projects/:id", verifyToken,updateLastActive,async (req, res) => {
+    app.delete("/projects/:id", verifyToken,checkBlockedUser,updateLastActive,async (req, res) => {
       try {
         const id = req.params.id;
 
@@ -791,7 +953,7 @@ app.post("/logout", (req, res) => {
       }
     });
     // tasks status change
-    app.patch("/move-task/:projectId",verifyToken,updateLastActive, async (req, res) => {
+    app.patch("/move-task/:projectId",verifyToken,checkBlockedUser,updateLastActive, async (req, res) => {
       try {
         const { projectId } = req.params;
         const { email, from, to, taskId } = req.body;
@@ -886,7 +1048,7 @@ app.post("/logout", (req, res) => {
       }
     });
     // joined team data get by user email
-    app.get("/my-projects/:email", verifyToken,updateLastActive,async (req, res) => {
+    app.get("/my-projects/:email", verifyToken,checkBlockedUser,updateLastActive,async (req, res) => {
       try {
         const email = req.params.email.toLowerCase();
 
@@ -908,7 +1070,7 @@ app.post("/logout", (req, res) => {
       }
     });
     // member remove with invite email
-    app.delete("/remove-member/:projectId/:email", verifyToken,updateLastActive,async (req, res) => {
+    app.delete("/remove-member/:projectId/:email", verifyToken,checkBlockedUser,updateLastActive,async (req, res) => {
       try {
         const { projectId, email } = req.params;
         const decodedEmail = decodeURIComponent(email);
@@ -969,7 +1131,7 @@ app.post("/logout", (req, res) => {
     });
     // remove that invite email which status are inpending or reject
 
-    app.delete("/remove-invite/:id/:email",verifyToken ,updateLastActive,async (req, res) => {
+    app.delete("/remove-invite/:id/:email",verifyToken ,checkBlockedUser,updateLastActive,async (req, res) => {
       const { id } = req.params;
       const email = decodeURIComponent(req.params.email); // ✅ important
 
@@ -991,7 +1153,7 @@ app.post("/logout", (req, res) => {
       }
     });
     // UPDATE task
-    app.patch("/update-task/:projectId",verifyToken,updateLastActive, async (req, res) => {
+    app.patch("/update-task/:projectId",verifyToken,checkBlockedUser,updateLastActive, async (req, res) => {
       try {
         const { projectId } = req.params;
         const { email, type, taskId, text } = req.body;
@@ -1056,7 +1218,7 @@ app.post("/logout", (req, res) => {
       }
     });
     // DELETE task
-    app.delete("/delete-task/:projectId",verifyToken,updateLastActive, async (req, res) => {
+    app.delete("/delete-task/:projectId",verifyToken,checkBlockedUser,updateLastActive, async (req, res) => {
       try {
         const { projectId } = req.params;
         const { email, type, taskId } = req.body;
@@ -1120,7 +1282,7 @@ app.post("/logout", (req, res) => {
       }
     });
     // work assign
-    app.patch("/add-task/:projectId", verifyToken,updateLastActive, async (req, res) => {
+    app.patch("/add-task/:projectId", verifyToken,checkBlockedUser,updateLastActive, async (req, res) => {
       try {
         const { projectId } = req.params;
         const { email, text, deadline, priority } = req.body;
@@ -1215,7 +1377,7 @@ app.post("/logout", (req, res) => {
     });
 
     // GET invited projects by user email
-    app.get("/my-invitations/:email",verifyToken,updateLastActive, async (req, res) => {
+    app.get("/my-invitations/:email",verifyToken,checkBlockedUser,updateLastActive, async (req, res) => {
       try {
         const email = req.params.email.toLowerCase();
 
@@ -1238,7 +1400,7 @@ app.post("/logout", (req, res) => {
     });
 
     // Update invitation status (approved/rejected) with add team member if approved
-    app.patch("/invite-status/:projectId",verifyToken,updateLastActive, async (req, res) => {
+    app.patch("/invite-status/:projectId",verifyToken,checkBlockedUser,updateLastActive, async (req, res) => {
       try {
         const { projectId } = req.params;
         const { email, status, name } = req.body;
@@ -1367,7 +1529,7 @@ app.post("/logout", (req, res) => {
 
     const nodemailer = require("nodemailer");
 
-    app.post("/invite/:id", verifyToken,updateLastActive,async (req, res) => {
+    app.post("/invite/:id", verifyToken,checkBlockedUser,updateLastActive,async (req, res) => {
       try {
         const projectId = req.params.id;
         const { email } = req.body;
@@ -1497,7 +1659,7 @@ app.post("/logout", (req, res) => {
     });
 
     // get single project by id
-    app.get("/project/:id", verifyToken,updateLastActive,async (req, res) => {
+    app.get("/project/:id", verifyToken,checkBlockedUser,updateLastActive,async (req, res) => {
       try {
         const id = req.params.id;
 
@@ -1517,7 +1679,7 @@ app.post("/logout", (req, res) => {
       }
     });
     // created project get only approved project
-    app.get("/projects/:email",verifyToken,updateLastActive, async (req, res) => {
+    app.get("/projects/:email",verifyToken,checkBlockedUser,updateLastActive, async (req, res) => {
       try {
         const email = req.params.email;
 
@@ -1540,7 +1702,7 @@ app.post("/logout", (req, res) => {
       }
     });
     // get notifications by user id
-    app.get("/notifications",verifyToken,updateLastActive, async (req, res) => {
+    app.get("/notifications",verifyToken,checkBlockedUser,updateLastActive, async (req, res) => {
       try {
         const email = req.query.email; // login user email
 
@@ -1579,7 +1741,7 @@ app.post("/logout", (req, res) => {
       }
     });
     // toggle nptification read /unread
-    app.patch("/notifications/:id/toggle-read",verifyToken,updateLastActive, async (req, res) => {
+    app.patch("/notifications/:id/toggle-read",verifyToken,checkBlockedUser,updateLastActive, async (req, res) => {
       try {
         const id = req.params.id;
 
@@ -1615,7 +1777,7 @@ app.post("/logout", (req, res) => {
       }
     });
     // DELETE NOTIFICATION
-    app.delete("/notifications/:id",verifyToken,updateLastActive, async (req, res) => {
+    app.delete("/notifications/:id",verifyToken,checkBlockedUser,updateLastActive, async (req, res) => {
       try {
         const id = req.params.id;
 
@@ -1643,7 +1805,7 @@ app.post("/logout", (req, res) => {
     });
     // project save with socket.io and notifiaction
 
-    app.post("/projects",verifyToken,updateLastActive, async (req, res) => {
+    app.post("/projects",verifyToken,checkBlockedUser,updateLastActive, async (req, res) => {
       try {
         const { teamName, projectTitle, description, email } = req.body;
 
@@ -1736,7 +1898,7 @@ app.post("/logout", (req, res) => {
       }
     });
     // user data get by email
-    app.get("/user/:email", verifyToken,updateLastActive,async (req, res) => {
+    app.get("/user/:email" ,async (req, res) => {
       try {
         const email = req.params.email;
 
@@ -1765,7 +1927,7 @@ app.post("/logout", (req, res) => {
 
     // users data save
 
-    app.post("/users",verifyToken,updateLastActive, async (req, res) => {
+    app.post("/users" , async (req, res) => {
       try {
         const { name, email } = req.body;
 
@@ -1821,6 +1983,8 @@ app.post("/logout", (req, res) => {
         });
       }
     });
+
+
     // update user data as profile update
 
     app.patch("/users/:email", async (req, res) => {
