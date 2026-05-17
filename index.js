@@ -232,6 +232,167 @@ const checkBlockedUser = async (req, res, next) => {
     });
   }
 };
+
+
+const cron = require("node-cron");
+
+// ======================= MAIN CRON =======================
+cron.schedule("*/5 * * * *", async () => {
+  console.log("⏰ Checking deadlines...");
+  await checkDeadlines();
+});
+
+// ======================= CHECK DEADLINES =======================
+const checkDeadlines = async () => {
+  const projects = await projectsCollection.find().toArray();
+  const now = new Date();
+
+  for (const project of projects) {
+    for (const member of project.teammember || []) {
+      const allTasks = [
+        ...(member.todo || []),
+        ...(member.running || []),
+      ];
+
+      for (const task of allTasks) {
+        // ❗ ignore done task
+        if (task.submittedAt) continue;
+
+        if (!task.deadline) continue;
+
+        const deadline = new Date(task.deadline);
+        const diffMs = deadline - now;
+        const diffHours = diffMs / (1000 * 60 * 60);
+
+        // ❗ expired skip
+        if (diffHours < 0) continue;
+
+        await handleReminder({
+          diffHours,
+          task,
+          member,
+          project,
+        });
+      }
+    }
+  }
+};
+
+// ======================= REMINDER LOGIC =======================
+const handleReminder = async ({ diffHours, task, member, project }) => {
+  // 👉 reminder flags init
+  if (!task.reminders) {
+    task.reminders = {
+      h24: false,
+      h12: false,
+      h6: false,
+      h1: false,
+    };
+  }
+
+  const send = async (hour) => {
+    await createNotification(member, project, hour);
+    await sendEmail(member.email, hour, project._id);
+
+    // 👉 realtime notification
+    io.to(member.email).emit("newNotification");
+  };
+
+  // ===== CONDITIONS =====
+  if (diffHours <= 24 && diffHours > 12 && !task.reminders.h24) {
+    await send(24);
+    task.reminders.h24 = true;
+  }
+
+  if (diffHours <= 12 && diffHours > 6 && !task.reminders.h12) {
+    await send(12);
+    task.reminders.h12 = true;
+  }
+
+  if (diffHours <= 6 && diffHours > 1 && !task.reminders.h6) {
+    await send(6);
+    task.reminders.h6 = true;
+  }
+
+  if (diffHours <= 1 && diffHours > 0 && !task.reminders.h1) {
+    await send(1);
+    task.reminders.h1 = true;
+  }
+
+  // ================= SAVE UPDATED TASK =================
+  await projectsCollection.updateOne(
+    {
+      _id: project._id,
+      "teammember.email": member.email,
+    },
+    {
+      $set: {
+        "teammember.$[m].todo": project.teammember.find(
+          (m) => m.email === member.email
+        ).todo,
+        "teammember.$[m].running": project.teammember.find(
+          (m) => m.email === member.email
+        ).running,
+      },
+    },
+    {
+      arrayFilters: [{ "m.email": member.email }],
+    }
+  );
+};
+
+// ======================= CREATE NOTIFICATION =======================
+const createNotification = async (member, project, hour) => {
+  const user = await usersCollection.findOne({
+    email: member.email,
+  });
+
+  const notification = {
+    type: "deadline_reminder",
+    message: `Your task deadline is in ${hour} hours`,
+    receiverId: user?._id,
+    receiverEmail: member.email,
+    url: `/developer_dashboard/joined_team_details/${project._id}`,
+    created_by: "devflow",
+    created_time: new Date(),
+    read: false,
+  };
+
+  await notificationsCollection.insertOne(notification);
+};
+
+// ======================= SEND EMAIL =======================
+const sendEmail = async (email, hour, projectId) => {
+  const transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: "mdyasin01928364@gmail.com",
+      pass: process.env.EMAIL_PASS,
+    },
+  });
+
+  await transporter.sendMail({
+    from: "mdyasin01928364@gmail.com",
+    to: email,
+    subject: "⏰ Deadline Reminder",
+    html: `
+      <h3>Your task deadline is in ${hour} hours</h3>
+      <p>Don't forget to complete your task on time.</p>
+      <a href="http://localhost:5173/developer_dashboard/joined_team_details/${projectId}">
+        View Project
+      </a>
+    `,
+  });
+};
+
+// ======================= SOCKET =======================
+io.on("connection", (socket) => {
+  socket.on("joinUser", (email) => {
+    socket.join(email);
+  });
+});
+
+
   // massage save 
     app.post("/project-message", verifyToken, async (req, res) => {
   try {
@@ -1300,6 +1461,13 @@ app.post("/logout", (req, res) => {
           deadline: new Date(deadline),
           priority,
           createdAt: new Date(),
+           // 🔥 ADD THIS
+  reminders: {
+    h24: false,
+    h12: false,
+    h6: false,
+    h1: false,
+  },
         };
 
         const project = await projectsCollection.findOne({
