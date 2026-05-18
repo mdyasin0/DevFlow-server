@@ -1317,7 +1317,7 @@ app.post("/logout", (req, res) => {
     app.patch("/update-task/:projectId",verifyToken,checkBlockedUser,updateLastActive, async (req, res) => {
       try {
         const { projectId } = req.params;
-        const { email, type, taskId, text } = req.body;
+        const { email, type, taskId, text ,newAttachments } = req.body;
 
         // 👉 project data (created_by দরকার)
         const project = await projectsCollection.findOne({
@@ -1338,12 +1338,10 @@ app.post("/logout", (req, res) => {
         const result = await projectsCollection.updateOne(
           { _id: new ObjectId(projectId) },
           {
-            $set: {
-              [`teammember.$[m].${type}.$[t].text`]: text.replace(
-                /\n/g,
-                "<br/>",
-              ),
-            },
+          $set: {
+  [`teammember.$[m].${type}.$[t].text`]: text.replace(/\n/g, "<br/>"),
+  [`teammember.$[m].${type}.$[t].attachments`]: newAttachments || [],
+},
           },
           {
             arrayFilters: [{ "m.email": email }, { "t.id": taskId }],
@@ -1446,7 +1444,7 @@ app.post("/logout", (req, res) => {
     app.patch("/add-task/:projectId", verifyToken,checkBlockedUser,updateLastActive, async (req, res) => {
       try {
         const { projectId } = req.params;
-        const { email, text, deadline, priority } = req.body;
+        const { email, text, deadline, priority , attachments } = req.body;
 
         if (!email || !text || !deadline || !priority) {
           return res.send({
@@ -1461,6 +1459,7 @@ app.post("/logout", (req, res) => {
           deadline: new Date(deadline),
           priority,
           createdAt: new Date(),
+          attachments: attachments || [], 
            // 🔥 ADD THIS
   reminders: {
     h24: false,
