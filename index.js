@@ -391,11 +391,31 @@ async function run() {
     app.post("/project-message", verifyToken, async (req, res) => {
       try {
         const { projectId, message, senderEmail, senderName } = req.body;
+  // 🔥 project find
+    const project = await projectsCollection.findOne({
+      _id: new ObjectId(projectId),
+    });
 
-        if (!projectId || !message) {
-          return res.status(400).send({ success: false });
-        }
+    if (!project) {
+      return res.status(404).send({
+        success: false,
+        message: "Project not found",
+      });
+    }
 
+    // 🔥 manager find
+    const manager = await usersCollection.findOne({
+      email: project.created_by,
+    });
+
+    // 🔒 PLAN CHECK (CORRECT)
+    if (!manager?.plan || manager?.plan?.type === "free") {
+      return res.status(403).send({
+        success: false,
+        code: "PLAN_RESTRICTED",
+        message: "Discussion disabled for this project (manager free plan)",
+      });
+    }
         const newMessage = {
           projectId,
           senderEmail,
@@ -1009,6 +1029,15 @@ async function run() {
           // 👉 user থেকে receiverId আনো
           const user = await usersCollection.findOne({ email: email });
 
+
+// 🔒 PLAN CHECK
+if (!user?.plan || user?.plan?.type === "free") {
+  return res.status(403).send({
+    success: false,
+    message: "Upgrade your plan to use reopen feature",
+    code: "PLAN_RESTRICTED",
+  });
+}
           // 👉 find task in done
           const task = member.done?.find((t) => t.id === taskId);
 
@@ -1308,7 +1337,19 @@ async function run() {
         try {
           const { projectId, email } = req.params;
           const decodedEmail = decodeURIComponent(email);
+// 👉 manager (logged in user) বের করো
+const currentUser = await usersCollection.findOne({
+  email: req.user.email, // verifyToken থেকে আসবে
+});
 
+// 🔒 PLAN CHECK (IMPORTANT)
+if (!currentUser?.plan || currentUser?.plan?.type === "free") {
+  return res.status(403).send({
+    success: false,
+    message: "Upgrade your plan to remove members",
+    code: "PLAN_RESTRICTED for remove member",
+  });
+}
           const project = await projectsCollection.findOne({
             _id: new ObjectId(projectId),
           });
@@ -1418,7 +1459,15 @@ async function run() {
 
           // 👉 user থেকে receiverId আনো
           const user = await usersCollection.findOne({ email: email });
+const isFreeUser = !user?.plan || user?.plan?.type === "free";
 
+if (isFreeUser && newAttachments?.length > 0) {
+  return res.status(403).send({
+    success: false,
+    code: "FILE_UPLOAD_RESTRICTED for update",
+    message: "File upload is only for Pro users",
+  });
+}
           // 👉 task update
           const result = await projectsCollection.updateOne(
             { _id: new ObjectId(projectId) },
@@ -1492,6 +1541,14 @@ async function run() {
           // 👉 user থেকে receiverId আনো
           const user = await usersCollection.findOne({ email: email });
 
+// 🔒 PLAN CHECK
+if (!user?.plan || user?.plan?.type === "free") {
+  return res.status(403).send({
+    success: false,
+    message: "Upgrade your plan to delete tasks",
+    code: "PLAN_RESTRICTED for delete",
+  });
+}
           // 👉 task delete
           const result = await projectsCollection.updateOne(
             { _id: new ObjectId(projectId) },
@@ -1593,7 +1650,41 @@ async function run() {
           }
 
           const user = await usersCollection.findOne({ email: email });
+// 🔒 PLAN + TASK LIMIT CHECK
+const isFreeUser = !user?.plan || user?.plan?.type === "free";
+if (isFreeUser && attachments?.length > 0) {
+  return res.status(403).send({
+    success: false,
+    code: "FILE_UPLOAD_RESTRICTED",
+    message: "File upload is only for Pro users",
+  });
+}
+// 🔒 CHARACTER LIMIT
+if (isFreeUser && text.length > 500) {
+  return res.status(403).send({
+    success: false,
+    code: "CHAR_LIMIT_EXCEEDED",
+    message: "Max 500 characters allowed in free plan",
+  });
+}
+if (isFreeUser) {
+  // 👉 project এর total task count বের করো
+  let totalTasks = 0;
 
+  project.teammember.forEach((member) => {
+    totalTasks += (member.todo?.length || 0);
+    totalTasks += (member.running?.length || 0);
+    totalTasks += (member.done?.length || 0);
+  });
+
+  if (totalTasks >= 50) {
+    return res.status(403).send({
+      success: false,
+      code: "TASK_LIMIT_EXCEEDED",
+      message: "Free plan limit reached. Upgrade for more tasks 🚀",
+    });
+  }
+}
           const result = await projectsCollection.updateOne(
             {
               _id: new ObjectId(projectId),
@@ -1999,31 +2090,57 @@ async function run() {
     );
 
     // get single project by id
-    app.get(
-      "/project/:id",
-      verifyToken,
-      checkBlockedUser,
-      updateLastActive,
-      async (req, res) => {
-        try {
-          const id = req.params.id;
+  app.get(
+  "/project/:id",
+  verifyToken,
+  checkBlockedUser,
+  updateLastActive,
+  async (req, res) => {
+    try {
+      const id = req.params.id;
 
-          const query = { _id: new ObjectId(id) };
+      const project = await projectsCollection.findOne({
+        _id: new ObjectId(id),
+      });
 
-          const result = await projectsCollection.findOne(query);
+      if (!project) {
+        return res.status(404).send({
+          success: false,
+          message: "Project not found",
+        });
+      }
 
-          res.send({
-            success: true,
-            data: result,
-          });
-        } catch (error) {
-          res.status(500).send({
-            success: false,
-            message: error.message,
-          });
-        }
-      },
-    );
+      // 🔥 manager info আনো
+      const manager = await usersCollection.findOne({
+        email: project.created_by,
+      });
+
+      const result = {
+        ...project,
+        manager: {
+          email: manager?.email,
+          name: manager?.name,
+          role: manager?.role,
+          plan: manager?.plan || {
+            type: "free",
+            startedAt: null,
+            expiresAt: null,
+          },
+        },
+      };
+
+      return res.send({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      return res.status(500).send({
+        success: false,
+        message: error.message,
+      });
+    }
+  },
+);
     // created project get only approved project
     app.get(
       "/projects/:email",
@@ -2291,6 +2408,40 @@ async function run() {
         }
       },
     );
+    // porject manager plane
+    app.get("/manager-plan/:email", async (req, res) => {
+  try {
+    const email = req.params.email;
+
+    // 1. find user
+    const user = await usersCollection.findOne({ email });
+
+    if (!user) {
+      return res.status(404).send({
+        success: false,
+        message: "Manager not found",
+      });
+    }
+
+    // 2. return only plan (optimized)
+    return res.send({
+      success: true,
+      data: {
+        email: user.email,
+        plan: user?.plan || {
+          type: "free",
+          startedAt: null,
+          expiresAt: null,
+        },
+      },
+    });
+  } catch (error) {
+    return res.status(500).send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
     // user data get by email
     app.get("/user/:email", async (req, res) => {
       try {
