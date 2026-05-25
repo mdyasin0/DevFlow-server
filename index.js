@@ -4,7 +4,7 @@ const express = require("express");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const cookieParser = require("cookie-parser");
-
+const Stripe = require("stripe");
 const app = express();
 app.use(cookieParser());
 app.use(
@@ -275,6 +275,13 @@ async function run() {
 
     // ======================= REMINDER LOGIC =======================
     const handleReminder = async ({ diffHours, task, member, project }) => {
+      const manager = await usersCollection.findOne({
+        email: project.created_by,
+      });
+
+      if (!manager || manager.plan?.type !== "premium") {
+        return; // ❌ skip reminder পুরো project এর জন্য
+      }
       // 👉 reminder flags init
       if (!task.reminders) {
         task.reminders = {
@@ -391,31 +398,31 @@ async function run() {
     app.post("/project-message", verifyToken, async (req, res) => {
       try {
         const { projectId, message, senderEmail, senderName } = req.body;
-  // 🔥 project find
-    const project = await projectsCollection.findOne({
-      _id: new ObjectId(projectId),
-    });
+        // 🔥 project find
+        const project = await projectsCollection.findOne({
+          _id: new ObjectId(projectId),
+        });
 
-    if (!project) {
-      return res.status(404).send({
-        success: false,
-        message: "Project not found",
-      });
-    }
+        if (!project) {
+          return res.status(404).send({
+            success: false,
+            message: "Project not found",
+          });
+        }
 
-    // 🔥 manager find
-    const manager = await usersCollection.findOne({
-      email: project.created_by,
-    });
+        // 🔥 manager find
+        const manager = await usersCollection.findOne({
+          email: project.created_by,
+        });
 
-    // 🔒 PLAN CHECK (CORRECT)
-    if (!manager?.plan || manager?.plan?.type === "free") {
-      return res.status(403).send({
-        success: false,
-        code: "PLAN_RESTRICTED",
-        message: "Discussion disabled for this project (manager free plan)",
-      });
-    }
+        // 🔒 PLAN CHECK (CORRECT)
+        if (!manager?.plan || manager?.plan?.type === "free") {
+          return res.status(403).send({
+            success: false,
+            code: "PLAN_RESTRICTED",
+            message: "Discussion disabled for this project (manager free plan)",
+          });
+        }
         const newMessage = {
           projectId,
           senderEmail,
@@ -621,7 +628,88 @@ async function run() {
         }
       },
     );
+    function getRemainingDays(expiresAt) {
+      const now = new Date();
+      const exp = new Date(expiresAt);
+      const diff = exp - now;
 
+      return Math.ceil(diff / (1000 * 60 * 60 * 24));
+    }
+    // START FREE API
+  app.post("/plan/start-free/:email", async (req, res) => {
+  try {
+    const email = req.params.email;
+
+    const user = await usersCollection.findOne({ email });
+
+    if (!user) {
+      return res.send({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const now = new Date();
+
+    // 🔥 CASE 1: Already free
+    if (user.plan?.type === "free") {
+      return res.send({
+        success: false,
+        message: "You are already in Free plan",
+      });
+    }
+
+    // 🚫 CASE 2: Premium active → BLOCK downgrade
+    if (
+      user.plan?.type === "premium" &&
+      user.plan.expiresAt &&
+      new Date(user.plan.expiresAt) > now
+    ) {
+      return res.send({
+        success: false,
+        message:
+          "You cannot downgrade while Premium is active. Wait until it expires.",
+      });
+    }
+
+    // 🔥 CASE 3: expired → auto free (ONLY allowed case)
+    if (
+      user.plan?.type === "premium" &&
+      user.plan.expiresAt &&
+      new Date(user.plan.expiresAt) <= now
+    ) {
+      await usersCollection.updateOne(
+        { email },
+        {
+          $set: {
+            plan: {
+              type: "free",
+              startedAt: new Date(),
+              expiresAt: null,
+            },
+            updatedAt: new Date(),
+          },
+        }
+      );
+
+      return res.send({
+        success: true,
+        message: "Premium expired. Auto converted to Free plan.",
+      });
+    }
+
+    return res.send({
+      success: false,
+      message: "Invalid request",
+    });
+
+  } catch (error) {
+    return res.send({
+      success: false,
+      message: error.message,
+    });
+  }
+});
     // user data get by email
     app.get("/users/:email", async (req, res) => {
       try {
@@ -1029,15 +1117,14 @@ async function run() {
           // 👉 user থেকে receiverId আনো
           const user = await usersCollection.findOne({ email: email });
 
-
-// 🔒 PLAN CHECK
-if (!user?.plan || user?.plan?.type === "free") {
-  return res.status(403).send({
-    success: false,
-    message: "Upgrade your plan to use reopen feature",
-    code: "PLAN_RESTRICTED",
-  });
-}
+          // 🔒 PLAN CHECK
+          if (!user?.plan || user?.plan?.type === "free") {
+            return res.status(403).send({
+              success: false,
+              message: "Upgrade your plan to use reopen feature",
+              code: "PLAN_RESTRICTED",
+            });
+          }
           // 👉 find task in done
           const task = member.done?.find((t) => t.id === taskId);
 
@@ -1337,19 +1424,19 @@ if (!user?.plan || user?.plan?.type === "free") {
         try {
           const { projectId, email } = req.params;
           const decodedEmail = decodeURIComponent(email);
-// 👉 manager (logged in user) বের করো
-const currentUser = await usersCollection.findOne({
-  email: req.user.email, // verifyToken থেকে আসবে
-});
+          // 👉 manager (logged in user) বের করো
+          const currentUser = await usersCollection.findOne({
+            email: req.user.email, // verifyToken থেকে আসবে
+          });
 
-// 🔒 PLAN CHECK (IMPORTANT)
-if (!currentUser?.plan || currentUser?.plan?.type === "free") {
-  return res.status(403).send({
-    success: false,
-    message: "Upgrade your plan to remove members",
-    code: "PLAN_RESTRICTED for remove member",
-  });
-}
+          // 🔒 PLAN CHECK (IMPORTANT)
+          if (!currentUser?.plan || currentUser?.plan?.type === "free") {
+            return res.status(403).send({
+              success: false,
+              message: "Upgrade your plan to remove members",
+              code: "PLAN_RESTRICTED for remove member",
+            });
+          }
           const project = await projectsCollection.findOne({
             _id: new ObjectId(projectId),
           });
@@ -1459,15 +1546,15 @@ if (!currentUser?.plan || currentUser?.plan?.type === "free") {
 
           // 👉 user থেকে receiverId আনো
           const user = await usersCollection.findOne({ email: email });
-const isFreeUser = !user?.plan || user?.plan?.type === "free";
+          const isFreeUser = !user?.plan || user?.plan?.type === "free";
 
-if (isFreeUser && newAttachments?.length > 0) {
-  return res.status(403).send({
-    success: false,
-    code: "FILE_UPLOAD_RESTRICTED for update",
-    message: "File upload is only for Pro users",
-  });
-}
+          if (isFreeUser && newAttachments?.length > 0) {
+            return res.status(403).send({
+              success: false,
+              code: "FILE_UPLOAD_RESTRICTED for update",
+              message: "File upload is only for Pro users",
+            });
+          }
           // 👉 task update
           const result = await projectsCollection.updateOne(
             { _id: new ObjectId(projectId) },
@@ -1541,14 +1628,14 @@ if (isFreeUser && newAttachments?.length > 0) {
           // 👉 user থেকে receiverId আনো
           const user = await usersCollection.findOne({ email: email });
 
-// 🔒 PLAN CHECK
-if (!user?.plan || user?.plan?.type === "free") {
-  return res.status(403).send({
-    success: false,
-    message: "Upgrade your plan to delete tasks",
-    code: "PLAN_RESTRICTED for delete",
-  });
-}
+          // 🔒 PLAN CHECK
+          if (!user?.plan || user?.plan?.type === "free") {
+            return res.status(403).send({
+              success: false,
+              message: "Upgrade your plan to delete tasks",
+              code: "PLAN_RESTRICTED for delete",
+            });
+          }
           // 👉 task delete
           const result = await projectsCollection.updateOne(
             { _id: new ObjectId(projectId) },
@@ -1650,41 +1737,41 @@ if (!user?.plan || user?.plan?.type === "free") {
           }
 
           const user = await usersCollection.findOne({ email: email });
-// 🔒 PLAN + TASK LIMIT CHECK
-const isFreeUser = !user?.plan || user?.plan?.type === "free";
-if (isFreeUser && attachments?.length > 0) {
-  return res.status(403).send({
-    success: false,
-    code: "FILE_UPLOAD_RESTRICTED",
-    message: "File upload is only for Pro users",
-  });
-}
-// 🔒 CHARACTER LIMIT
-if (isFreeUser && text.length > 500) {
-  return res.status(403).send({
-    success: false,
-    code: "CHAR_LIMIT_EXCEEDED",
-    message: "Max 500 characters allowed in free plan",
-  });
-}
-if (isFreeUser) {
-  // 👉 project এর total task count বের করো
-  let totalTasks = 0;
+          // 🔒 PLAN + TASK LIMIT CHECK
+          const isFreeUser = !user?.plan || user?.plan?.type === "free";
+          if (isFreeUser && attachments?.length > 0) {
+            return res.status(403).send({
+              success: false,
+              code: "FILE_UPLOAD_RESTRICTED",
+              message: "File upload is only for Pro users",
+            });
+          }
+          // 🔒 CHARACTER LIMIT
+          if (isFreeUser && text.length > 500) {
+            return res.status(403).send({
+              success: false,
+              code: "CHAR_LIMIT_EXCEEDED",
+              message: "Max 500 characters allowed in free plan",
+            });
+          }
+          if (isFreeUser) {
+            // 👉 project এর total task count বের করো
+            let totalTasks = 0;
 
-  project.teammember.forEach((member) => {
-    totalTasks += (member.todo?.length || 0);
-    totalTasks += (member.running?.length || 0);
-    totalTasks += (member.done?.length || 0);
-  });
+            project.teammember.forEach((member) => {
+              totalTasks += member.todo?.length || 0;
+              totalTasks += member.running?.length || 0;
+              totalTasks += member.done?.length || 0;
+            });
 
-  if (totalTasks >= 50) {
-    return res.status(403).send({
-      success: false,
-      code: "TASK_LIMIT_EXCEEDED",
-      message: "Free plan limit reached. Upgrade for more tasks 🚀",
-    });
-  }
-}
+            if (totalTasks >= 50) {
+              return res.status(403).send({
+                success: false,
+                code: "TASK_LIMIT_EXCEEDED",
+                message: "Free plan limit reached. Upgrade for more tasks 🚀",
+              });
+            }
+          }
           const result = await projectsCollection.updateOne(
             {
               _id: new ObjectId(projectId),
@@ -1911,7 +1998,220 @@ if (isFreeUser) {
         }
       },
     );
+    // 🔥 CHECK USER PLAN
+app.get("/plan/check/:email", async (req, res) => {
+  try {
+    const { email } = req.params;
 
+    const user = await usersCollection.findOne({ email });
+
+    if (!user || !user.plan) {
+      return res.json({ isPremium: false });
+    }
+
+    const now = new Date();
+    const expiresAt = new Date(user.plan.expiresAt);
+
+    if (user.plan.type === "premium" && expiresAt > now) {
+      const remainingDays = Math.ceil(
+        (expiresAt - now) / (1000 * 60 * 60 * 24)
+      );
+
+      return res.json({
+        isPremium: true,
+        remainingDays,
+      });
+    }
+
+    res.json({ isPremium: false });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+    // Stripe Checkout Session Create
+    app.post("/plan/upgrade-premium/:email", async (req, res) => {
+      try {
+        const { email } = req.params;
+
+        const session = await stripe.checkout.sessions.create({
+          payment_method_types: ["card"],
+          mode: "subscription",
+
+          customer_email: email,
+
+          line_items: [
+            {
+              price: "price_1TavbOQWZJvyLAEr8euikwCN", 
+              quantity: 1,
+            },
+          ],
+
+        success_url: `http://localhost:5000/payment-success?session_id={CHECKOUT_SESSION_ID}&email=${email}`,
+          cancel_url: `http://localhost:5173/cancel`,
+        });
+
+        res.json({ url: session.url });
+      } catch (error) {
+        res.status(500).json({ message: error.message });
+      }
+    });
+    // PAYMENT SUCCESS HANDLER
+  app.get("/payment-success", async (req, res) => {
+  try {
+    const { session_id, email } = req.query;
+
+    if (!session_id) {
+      return res.status(400).send("Missing session_id");
+    }
+
+    // 🔥 Stripe থেকে real session আনতেছি
+    const session = await stripe.checkout.sessions.retrieve(session_id);
+
+    // ❗ Security check 1
+    if (session.status !== "complete") {
+      return res.send("Payment not completed");
+    }
+
+    // ❗ Security check 2 (VERY IMPORTANT)
+    if (session.customer_email !== email) {
+      return res.send("Invalid user");
+    }
+
+    const now = new Date();
+    const expires = new Date();
+    expires.setDate(now.getDate() + 30);
+
+    await usersCollection.updateOne(
+      { email },
+      {
+        $set: {
+          plan: {
+            type: "premium",
+            startedAt: now,
+            expiresAt: expires,
+          },
+          updatedAt: new Date(),
+        },
+      }
+    );
+
+    res.redirect("http://localhost:5173/success");
+
+  } catch (error) {
+    res.status(500).send(error.message);
+  }
+});
+
+    // check corn for plane deadline and auto update
+
+    cron.schedule("0 0 * * *", async () => {
+      const now = new Date();
+
+      const premiumUsers = await usersCollection
+        .find({ "plan.type": "premium" })
+        .toArray();
+
+      for (const user of premiumUsers) {
+        if (!user.plan?.expiresAt) continue;
+
+        const expiresAt = new Date(user.plan.expiresAt);
+
+        const diffDays = Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
+
+        // ================================
+        // 🔴 CASE 1: EXPIRED → FREE
+        // ================================
+        if (diffDays <= 0) {
+          await usersCollection.updateOne(
+            { _id: user._id },
+            {
+              $set: {
+                plan: {
+                  type: "free",
+                  startedAt: new Date(),
+                  expiresAt: null,
+                },
+              },
+            },
+          );
+
+          // DB NOTIFICATION
+          const notification = {
+            type: "plan_expired",
+            message: "Your premium plan has expired and converted to free plan",
+            receiverId: user._id,
+            receiverEmail: user.email,
+            url: "/pricingpage",
+            created_by: "devflow",
+            created_time: new Date(),
+            read: false,
+          };
+
+          await notificationsCollection.insertOne(notification);
+
+          // SOCKET EMIT 🔥
+          io.to(user._id.toString()).emit("notification", notification);
+
+          // EMAIL (direct nodemailer)
+          const transporter = nodemailer.createTransport({
+            service: "gmail",
+            auth: {
+              user: process.env.EMAIL,
+              pass: process.env.EMAIL_PASS,
+            },
+          });
+
+          await transporter.sendMail({
+            from: process.env.EMAIL,
+            to: user.email,
+            subject: "Plan Expired",
+            html: `<p>Your premium plan has expired and converted to free plan.</p>`,
+          });
+        }
+
+        // ================================
+        // 🟡 CASE 2: REMINDER (1–7 days)
+        // ================================
+        if (diffDays > 0 && diffDays <= 7) {
+          const message = `Your plan will expire soon. Remaining ${diffDays} days`;
+
+          const notification = {
+            type: "plan_reminder",
+            message,
+            receiverId: user._id,
+            receiverEmail: user.email,
+            url: "/pricingpage",
+            created_by: "devflow",
+            created_time: new Date(),
+            read: false,
+          };
+
+          // DB SAVE
+          await notificationsCollection.insertOne(notification);
+
+          // SOCKET REALTIME 🔥
+          io.to(user._id.toString()).emit("notification", notification);
+
+          // EMAIL SEND
+          const transporter = nodemailer.createTransport({
+            service: "gmail",
+            auth: {
+              user: process.env.EMAIL,
+              pass: process.env.EMAIL_PASS,
+            },
+          });
+
+          await transporter.sendMail({
+            from: process.env.EMAIL,
+            to: user.email,
+            subject: "Plan Expiring Soon",
+            html: `<p>${message}</p>`,
+          });
+        }
+      }
+    });
     // invite email send and save email and status
 
     const nodemailer = require("nodemailer");
@@ -2090,57 +2390,57 @@ if (isFreeUser) {
     );
 
     // get single project by id
-  app.get(
-  "/project/:id",
-  verifyToken,
-  checkBlockedUser,
-  updateLastActive,
-  async (req, res) => {
-    try {
-      const id = req.params.id;
+    app.get(
+      "/project/:id",
+      verifyToken,
+      checkBlockedUser,
+      updateLastActive,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
 
-      const project = await projectsCollection.findOne({
-        _id: new ObjectId(id),
-      });
+          const project = await projectsCollection.findOne({
+            _id: new ObjectId(id),
+          });
 
-      if (!project) {
-        return res.status(404).send({
-          success: false,
-          message: "Project not found",
-        });
-      }
+          if (!project) {
+            return res.status(404).send({
+              success: false,
+              message: "Project not found",
+            });
+          }
 
-      // 🔥 manager info আনো
-      const manager = await usersCollection.findOne({
-        email: project.created_by,
-      });
+          // 🔥 manager info আনো
+          const manager = await usersCollection.findOne({
+            email: project.created_by,
+          });
 
-      const result = {
-        ...project,
-        manager: {
-          email: manager?.email,
-          name: manager?.name,
-          role: manager?.role,
-          plan: manager?.plan || {
-            type: "free",
-            startedAt: null,
-            expiresAt: null,
-          },
-        },
-      };
+          const result = {
+            ...project,
+            manager: {
+              email: manager?.email,
+              name: manager?.name,
+              role: manager?.role,
+              plan: manager?.plan || {
+                type: "free",
+                startedAt: null,
+                expiresAt: null,
+              },
+            },
+          };
 
-      return res.send({
-        success: true,
-        data: result,
-      });
-    } catch (error) {
-      return res.status(500).send({
-        success: false,
-        message: error.message,
-      });
-    }
-  },
-);
+          return res.send({
+            success: true,
+            data: result,
+          });
+        } catch (error) {
+          return res.status(500).send({
+            success: false,
+            message: error.message,
+          });
+        }
+      },
+    );
     // created project get only approved project
     app.get(
       "/projects/:email",
@@ -2410,38 +2710,38 @@ if (isFreeUser) {
     );
     // porject manager plane
     app.get("/manager-plan/:email", async (req, res) => {
-  try {
-    const email = req.params.email;
+      try {
+        const email = req.params.email;
 
-    // 1. find user
-    const user = await usersCollection.findOne({ email });
+        // 1. find user
+        const user = await usersCollection.findOne({ email });
 
-    if (!user) {
-      return res.status(404).send({
-        success: false,
-        message: "Manager not found",
-      });
-    }
+        if (!user) {
+          return res.status(404).send({
+            success: false,
+            message: "Manager not found",
+          });
+        }
 
-    // 2. return only plan (optimized)
-    return res.send({
-      success: true,
-      data: {
-        email: user.email,
-        plan: user?.plan || {
-          type: "free",
-          startedAt: null,
-          expiresAt: null,
-        },
-      },
+        // 2. return only plan (optimized)
+        return res.send({
+          success: true,
+          data: {
+            email: user.email,
+            plan: user?.plan || {
+              type: "free",
+              startedAt: null,
+              expiresAt: null,
+            },
+          },
+        });
+      } catch (error) {
+        return res.status(500).send({
+          success: false,
+          message: error.message,
+        });
+      }
     });
-  } catch (error) {
-    return res.status(500).send({
-      success: false,
-      message: error.message,
-    });
-  }
-});
     // user data get by email
     app.get("/user/:email", async (req, res) => {
       try {
