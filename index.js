@@ -9,7 +9,9 @@ const app = express();
 app.use(cookieParser());
 app.use(
   cors({
-    origin: "https://devflow-32d85.web.app",
+    origin:
+      "https://devflow-32d85.web.app",
+      // "http://localhost:5173",
     credentials: true,
   }),
 );
@@ -20,7 +22,9 @@ const { Server } = require("socket.io");
 const PORT = process.env.PORT || 5000;
 const io = new Server(server, {
   cors: {
-    origin: "https://devflow-32d85.web.app", // production এ specific domain দিবা
+    origin:
+      "https://devflow-32d85.web.app",
+      // "http://localhost:5173", // production এ specific domain দিবা
     methods: ["GET", "POST", "PATCH", "DELETE"],
   },
 });
@@ -106,8 +110,8 @@ async function run() {
         // 🔥 COOKIE SET (IMPORTANT CHANGE)
         res.cookie("token", token, {
           httpOnly: true, // JS access করতে পারবে না (secure)
-          secure: false, // production এ true করবে (HTTPS)
-          sameSite: "strict",
+          secure: true, // Render HTTPS
+          sameSite: "none",
           maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
         });
 
@@ -164,38 +168,38 @@ async function run() {
       }
     };
     // check token ,is it verifide !
- const verifyToken = (req, res, next) => {
-  const token = req.cookies?.token;
+    const verifyToken = (req, res, next) => {
+      const token = req.cookies?.token;
 
-  console.log("🍪 Incoming Cookies:", req.cookies);
-  console.log("🔐 Token Found:", token);
+      console.log("🍪 Incoming Cookies:", req.cookies);
+      console.log("🔐 Token Found:", token);
 
-  if (!token) {
-    console.log("❌ AUTH FAIL: No token in cookies");
+      if (!token) {
+        console.log("❌ AUTH FAIL: No token in cookies");
 
-    return res.status(401).send({
-      success: false,
-      message: "Unauthorized: No token found",
-    });
-  }
+        return res.status(401).send({
+          success: false,
+          message: "Unauthorized: No token found",
+        });
+      }
 
-  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-    if (err) {
-      console.log("❌ TOKEN ERROR:", err.message);
+      jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+        if (err) {
+          console.log("❌ TOKEN ERROR:", err.message);
 
-      return res.status(403).send({
-        success: false,
-        message: "Forbidden: Invalid token",
-        error: err.message,
+          return res.status(403).send({
+            success: false,
+            message: "Forbidden: Invalid token",
+            error: err.message,
+          });
+        }
+
+        console.log("✅ TOKEN VERIFIED USER:", decoded);
+
+        req.user = decoded;
+        next();
       });
-    }
-
-    console.log("✅ TOKEN VERIFIED USER:", decoded);
-
-    req.user = decoded;
-    next();
-  });
-};
+    };
     // check is user bloack in every api call
     const checkBlockedUser = async (req, res, next) => {
       try {
@@ -222,8 +226,8 @@ async function run() {
           // 👉 cookie clear (same as logout API)
           res.clearCookie("token", {
             httpOnly: true,
-            sameSite: "strict",
-            secure: false,
+            secure: true, // Render HTTPS
+            sameSite: "none",
           });
 
           return res.status(403).send({
@@ -546,14 +550,14 @@ async function run() {
     app.post("/logout", (req, res) => {
       res.clearCookie("token", {
         httpOnly: true,
-        sameSite: "strict",
-        secure: false,
+        secure: true, // Render HTTPS
+        sameSite: "none",
       });
 
       res.send({ success: true });
     });
     // user bloack
-    app.patch("/users/block/:id",verifyToken, async (req, res) => {
+    app.patch("/users/block/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
 
@@ -581,7 +585,7 @@ async function run() {
     });
 
     // user unbloack
-    app.patch("/users/unblock/:id",verifyToken, async (req, res) => {
+    app.patch("/users/unblock/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
 
