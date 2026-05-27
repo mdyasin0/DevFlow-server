@@ -66,7 +66,7 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
-    await client.connect();
+    // await client.connect();
 
     // database collections
     const database = client.db("DevFlow");
@@ -164,28 +164,38 @@ async function run() {
       }
     };
     // check token ,is it verifide !
-    const verifyToken = (req, res, next) => {
-      const token = req.cookies?.token;
+ const verifyToken = (req, res, next) => {
+  const token = req.cookies?.token;
 
-      if (!token) {
-        return res.status(401).send({
-          success: false,
-          message: "Unauthorized: No token found",
-        });
-      }
+  console.log("🍪 Incoming Cookies:", req.cookies);
+  console.log("🔐 Token Found:", token);
 
-      jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-        if (err) {
-          return res.status(403).send({
-            success: false,
-            message: "Forbidden: Invalid token",
-          });
-        }
+  if (!token) {
+    console.log("❌ AUTH FAIL: No token in cookies");
 
-        req.user = decoded; // user info store
-        next();
+    return res.status(401).send({
+      success: false,
+      message: "Unauthorized: No token found",
+    });
+  }
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err) {
+      console.log("❌ TOKEN ERROR:", err.message);
+
+      return res.status(403).send({
+        success: false,
+        message: "Forbidden: Invalid token",
+        error: err.message,
       });
-    };
+    }
+
+    console.log("✅ TOKEN VERIFIED USER:", decoded);
+
+    req.user = decoded;
+    next();
+  });
+};
     // check is user bloack in every api call
     const checkBlockedUser = async (req, res, next) => {
       try {
@@ -543,7 +553,7 @@ async function run() {
       res.send({ success: true });
     });
     // user bloack
-    app.patch("/users/block/:id", async (req, res) => {
+    app.patch("/users/block/:id",verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
 
@@ -571,7 +581,7 @@ async function run() {
     });
 
     // user unbloack
-    app.patch("/users/unblock/:id", async (req, res) => {
+    app.patch("/users/unblock/:id",verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
 
@@ -601,7 +611,6 @@ async function run() {
     app.patch(
       "/users/role/:id",
       verifyToken,
-      checkBlockedUser,
       updateLastActive,
       async (req, res) => {
         try {
@@ -636,105 +645,110 @@ async function run() {
       return Math.ceil(diff / (1000 * 60 * 60 * 24));
     }
     // START FREE API
-  app.post("/plan/start-free/:email", async (req, res) => {
-  try {
-    const email = req.params.email;
-
-    const user = await usersCollection.findOne({ email });
-
-    if (!user) {
-      return res.send({
-        success: false,
-        message: "User not found",
-      });
-    }
-
-    const now = new Date();
-
-    // 🔥 CASE 1: Already free
-    if (user.plan?.type === "free") {
-      return res.send({
-        success: false,
-        message: "You are already in Free plan",
-      });
-    }
-
-    // 🚫 CASE 2: Premium active → BLOCK downgrade
-    if (
-      user.plan?.type === "premium" &&
-      user.plan.expiresAt &&
-      new Date(user.plan.expiresAt) > now
-    ) {
-      return res.send({
-        success: false,
-        message:
-          "You cannot downgrade while Premium is active. Wait until it expires.",
-      });
-    }
-
-    // 🔥 CASE 3: expired → auto free (ONLY allowed case)
-    if (
-      user.plan?.type === "premium" &&
-      user.plan.expiresAt &&
-      new Date(user.plan.expiresAt) <= now
-    ) {
-      await usersCollection.updateOne(
-        { email },
-        {
-          $set: {
-            plan: {
-              type: "free",
-              startedAt: new Date(),
-              expiresAt: null,
-            },
-            updatedAt: new Date(),
-          },
-        }
-      );
-
-      return res.send({
-        success: true,
-        message: "Premium expired. Auto converted to Free plan.",
-      });
-    }
-
-    return res.send({
-      success: false,
-      message: "Invalid request",
-    });
-
-  } catch (error) {
-    return res.send({
-      success: false,
-      message: error.message,
-    });
-  }
-});
-    // user data get by email
-    app.get("/users/:email", async (req, res) => {
+    app.post("/plan/start-free/:email", async (req, res) => {
       try {
         const email = req.params.email;
 
         const user = await usersCollection.findOne({ email });
 
         if (!user) {
-          return res.status(404).send({
+          return res.send({
             success: false,
             message: "User not found",
           });
         }
 
-        res.send({
-          success: true,
-          data: user,
+        const now = new Date();
+
+        // 🔥 CASE 1: Already free
+        if (user.plan?.type === "free") {
+          return res.send({
+            success: false,
+            message: "You are already in Free plan",
+          });
+        }
+
+        // 🚫 CASE 2: Premium active → BLOCK downgrade
+        if (
+          user.plan?.type === "premium" &&
+          user.plan.expiresAt &&
+          new Date(user.plan.expiresAt) > now
+        ) {
+          return res.send({
+            success: false,
+            message:
+              "You cannot downgrade while Premium is active. Wait until it expires.",
+          });
+        }
+
+        // 🔥 CASE 3: expired → auto free (ONLY allowed case)
+        if (
+          user.plan?.type === "premium" &&
+          user.plan.expiresAt &&
+          new Date(user.plan.expiresAt) <= now
+        ) {
+          await usersCollection.updateOne(
+            { email },
+            {
+              $set: {
+                plan: {
+                  type: "free",
+                  startedAt: new Date(),
+                  expiresAt: null,
+                },
+                updatedAt: new Date(),
+              },
+            },
+          );
+
+          return res.send({
+            success: true,
+            message: "Premium expired. Auto converted to Free plan.",
+          });
+        }
+
+        return res.send({
+          success: false,
+          message: "Invalid request",
         });
       } catch (error) {
-        res.send({
+        return res.send({
           success: false,
           message: error.message,
         });
       }
     });
+    // user data get by email
+    app.get(
+      "/users/:email",
+      verifyToken,
+      checkBlockedUser,
+      updateLastActive,
+      async (req, res) => {
+        try {
+          const email = req.params.email;
+
+          const user = await usersCollection.findOne({ email });
+
+          if (!user) {
+            return res.status(404).send({
+              success: false,
+              message: "User not found",
+            });
+          }
+
+          res.send({
+            success: true,
+            data: user,
+          });
+        } catch (error) {
+          res.send({
+            success: false,
+            message: error.message,
+          });
+        }
+      },
+    );
     // all not block user get
     app.get(
       "/approved_users",
@@ -1999,35 +2013,35 @@ async function run() {
       },
     );
     // 🔥 CHECK USER PLAN
-app.get("/plan/check/:email", async (req, res) => {
-  try {
-    const { email } = req.params;
+    app.get("/plan/check/:email", async (req, res) => {
+      try {
+        const { email } = req.params;
 
-    const user = await usersCollection.findOne({ email });
+        const user = await usersCollection.findOne({ email });
 
-    if (!user || !user.plan) {
-      return res.json({ isPremium: false });
-    }
+        if (!user || !user.plan) {
+          return res.json({ isPremium: false });
+        }
 
-    const now = new Date();
-    const expiresAt = new Date(user.plan.expiresAt);
+        const now = new Date();
+        const expiresAt = new Date(user.plan.expiresAt);
 
-    if (user.plan.type === "premium" && expiresAt > now) {
-      const remainingDays = Math.ceil(
-        (expiresAt - now) / (1000 * 60 * 60 * 24)
-      );
+        if (user.plan.type === "premium" && expiresAt > now) {
+          const remainingDays = Math.ceil(
+            (expiresAt - now) / (1000 * 60 * 60 * 24),
+          );
 
-      return res.json({
-        isPremium: true,
-        remainingDays,
-      });
-    }
+          return res.json({
+            isPremium: true,
+            remainingDays,
+          });
+        }
 
-    res.json({ isPremium: false });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-});
+        res.json({ isPremium: false });
+      } catch (err) {
+        res.status(500).json({ message: err.message });
+      }
+    });
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
     // Stripe Checkout Session Create
@@ -2043,12 +2057,12 @@ app.get("/plan/check/:email", async (req, res) => {
 
           line_items: [
             {
-              price: "price_1TavbOQWZJvyLAEr8euikwCN", 
+              price: "price_1TavbOQWZJvyLAEr8euikwCN",
               quantity: 1,
             },
           ],
 
-        success_url: `http://localhost:5000/payment-success?session_id={CHECKOUT_SESSION_ID}&email=${email}`,
+          success_url: `http://localhost:5000/payment-success?session_id={CHECKOUT_SESSION_ID}&email=${email}`,
           cancel_url: `http://localhost:5173/cancel`,
         });
 
@@ -2058,51 +2072,50 @@ app.get("/plan/check/:email", async (req, res) => {
       }
     });
     // PAYMENT SUCCESS HANDLER
-  app.get("/payment-success", async (req, res) => {
-  try {
-    const { session_id, email } = req.query;
+    app.get("/payment-success", async (req, res) => {
+      try {
+        const { session_id, email } = req.query;
 
-    if (!session_id) {
-      return res.status(400).send("Missing session_id");
-    }
+        if (!session_id) {
+          return res.status(400).send("Missing session_id");
+        }
 
-    // 🔥 Stripe থেকে real session আনতেছি
-    const session = await stripe.checkout.sessions.retrieve(session_id);
+        // 🔥 Stripe থেকে real session আনতেছি
+        const session = await stripe.checkout.sessions.retrieve(session_id);
 
-    // ❗ Security check 1
-    if (session.status !== "complete") {
-      return res.send("Payment not completed");
-    }
+        // ❗ Security check 1
+        if (session.status !== "complete") {
+          return res.send("Payment not completed");
+        }
 
-    // ❗ Security check 2 (VERY IMPORTANT)
-    if (session.customer_email !== email) {
-      return res.send("Invalid user");
-    }
+        // ❗ Security check 2 (VERY IMPORTANT)
+        if (session.customer_email !== email) {
+          return res.send("Invalid user");
+        }
 
-    const now = new Date();
-    const expires = new Date();
-    expires.setDate(now.getDate() + 30);
+        const now = new Date();
+        const expires = new Date();
+        expires.setDate(now.getDate() + 30);
 
-    await usersCollection.updateOne(
-      { email },
-      {
-        $set: {
-          plan: {
-            type: "premium",
-            startedAt: now,
-            expiresAt: expires,
+        await usersCollection.updateOne(
+          { email },
+          {
+            $set: {
+              plan: {
+                type: "premium",
+                startedAt: now,
+                expiresAt: expires,
+              },
+              updatedAt: new Date(),
+            },
           },
-          updatedAt: new Date(),
-        },
+        );
+
+        res.redirect("http://localhost:5173/success");
+      } catch (error) {
+        res.status(500).send(error.message);
       }
-    );
-
-    res.redirect("http://localhost:5173/success");
-
-  } catch (error) {
-    res.status(500).send(error.message);
-  }
-});
+    });
 
     // check corn for plane deadline and auto update
 
@@ -2743,7 +2756,7 @@ app.get("/plan/check/:email", async (req, res) => {
       }
     });
     // user data get by email
-    app.get("/user/:email", async (req, res) => {
+    app.get("/user/:email", verifyToken, async (req, res) => {
       try {
         const email = req.params.email;
 
@@ -2836,38 +2849,44 @@ app.get("/plan/check/:email", async (req, res) => {
 
     // update user data as profile update
 
-    app.patch("/users/:email", async (req, res) => {
-      try {
-        const email = req.params.email;
-        const { name } = req.body; // ❌ photo removed
+    app.patch(
+      "/users/:email",
+      verifyToken,
+      checkBlockedUser,
+      updateLastActive,
+      async (req, res) => {
+        try {
+          const email = req.params.email;
+          const { name } = req.body; // ❌ photo removed
 
-        const result = await usersCollection.updateOne(
-          { email },
-          {
-            $set: {
-              name,
-              updatedAt: new Date(),
+          const result = await usersCollection.updateOne(
+            { email },
+            {
+              $set: {
+                name,
+                updatedAt: new Date(),
+              },
             },
-          },
-        );
+          );
 
-        res.send({
-          success: true,
-          message: "Profile updated successfully",
-          data: result,
-        });
-      } catch (error) {
-        res.status(500).send({
-          success: false,
-          message: error.message,
-        });
-      }
-    });
-    // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!",
+          res.send({
+            success: true,
+            message: "Profile updated successfully",
+            data: result,
+          });
+        } catch (error) {
+          res.status(500).send({
+            success: false,
+            message: error.message,
+          });
+        }
+      },
     );
+    // Send a ping to confirm a successful connection
+    // await client.db("admin").command({ ping: 1 });
+    // console.log(
+    //   "Pinged your deployment. You successfully connected to MongoDB!",
+    // );
   } catch (err) {
     console.log(err);
   }
