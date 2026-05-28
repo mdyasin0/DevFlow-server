@@ -10,8 +10,8 @@ app.use(cookieParser());
 app.use(
   cors({
     origin:
-      "https://devflow-32d85.web.app",
-      // "http://localhost:5173",
+      // "https://devflow-32d85.web.app",
+      "http://localhost:5173",
     credentials: true,
   }),
 );
@@ -23,8 +23,8 @@ const PORT = process.env.PORT || 5000;
 const io = new Server(server, {
   cors: {
     origin:
-      "https://devflow-32d85.web.app",
-      // "http://localhost:5173", // production এ specific domain দিবা
+      // "https://devflow-32d85.web.app",
+      "http://localhost:5173", // production এ specific domain দিবা
     methods: ["GET", "POST", "PATCH", "DELETE"],
   },
 });
@@ -97,7 +97,7 @@ async function run() {
         if (!user) {
           return res.status(404).send({
             success: false,
-            message: "User not found",
+            message: "User not found  /jwt",
           });
         }
 
@@ -110,8 +110,8 @@ async function run() {
         // 🔥 COOKIE SET (IMPORTANT CHANGE)
         res.cookie("token", token, {
           httpOnly: true, // JS access করতে পারবে না (secure)
-          secure: true, // Render HTTPS
-          sameSite: "none",
+          secure: false, // Render HTTPS
+          sameSite: "strict",
           maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
         });
 
@@ -217,7 +217,7 @@ async function run() {
         if (!user) {
           return res.status(404).send({
             success: false,
-            message: "User not found",
+            message: "User not found bloceduser",
           });
         }
 
@@ -226,8 +226,8 @@ async function run() {
           // 👉 cookie clear (same as logout API)
           res.clearCookie("token", {
             httpOnly: true,
-            secure: true, // Render HTTPS
-            sameSite: "none",
+            secure: false, // Render HTTPS
+            sameSite: "strict",
           });
 
           return res.status(403).send({
@@ -550,8 +550,8 @@ async function run() {
     app.post("/logout", (req, res) => {
       res.clearCookie("token", {
         httpOnly: true,
-        secure: true, // Render HTTPS
-        sameSite: "none",
+        secure: false, // Render HTTPS
+        sameSite: "strict",
       });
 
       res.send({ success: true });
@@ -737,7 +737,7 @@ async function run() {
           if (!user) {
             return res.status(404).send({
               success: false,
-              message: "User not found",
+              message: "User not found  /users/:email",
             });
           }
 
@@ -894,14 +894,13 @@ async function run() {
             { _id: new ObjectId(id) },
             { $set: { status } },
           );
-
+          const projectInfo = `project name : ${project.projectTitle}  Team name : ${project.teamName}`;
           // 🔥 3. message set
           let message = "";
           if (status === "approved") {
-            message = "Your project has been approved";
+            message = `Your project has been approved ${projectInfo}`;
           } else if (status === "rejected") {
-            message =
-              "Your project rejected. Please create project based on rules and regulations";
+            message = `Your project rejected. Please create project based on rules and regulations ${projectInfo}`;
           } else {
             message = "Project status updated";
           }
@@ -940,7 +939,10 @@ async function run() {
             _id: result.insertedId,
             ...notification,
           };
-
+          io.to(receiverUser._id.toString()).emit(
+            "newNotification",
+            fullNotification,
+          );
           io.to(receiverUser._id.toString()).emit("project_status_updated", {
             projectId: id,
             status,
@@ -1224,6 +1226,19 @@ async function run() {
       async (req, res) => {
         try {
           const id = req.params.id;
+          // 🔥 USER GET
+          const user = await usersCollection.findOne({
+            email: req.user.email,
+          });
+
+          // ❌ যদি free user হয় → delete block
+          if (user?.plan?.type === "free") {
+            return res.status(403).send({
+              success: false,
+              code: "Project only premium user can delete",
+              message: "Only premium users can delete projects",
+            });
+          }
 
           const project = await projectsCollection.findOne({
             _id: new ObjectId(id),
@@ -1510,7 +1525,7 @@ async function run() {
         }
       },
     );
-    // remove that invite email which status are inpending or reject
+    // remove that invite email which status are in pending or reject
 
     app.delete(
       "/remove-invite/:id/:email",
@@ -1522,6 +1537,27 @@ async function run() {
         const email = decodeURIComponent(req.params.email); // ✅ important
 
         try {
+          // 🔥 1. user বের করো (logged-in user)
+          const user = await usersCollection.findOne({
+            email: req.user.email,
+          });
+
+          if (!user) {
+            return res.status(404).send({
+              success: false,
+              message: "User not found",
+            });
+          }
+
+          // 🚫 2. FREE plan block
+          if (user.plan?.type === "free") {
+            return res.status(403).send({
+              success: false,
+              code: "NO permission to delete invaitations",
+              message: "Free users cannot remove invites. Upgrade your plan.",
+            });
+          }
+
           const result = await projectsCollection.updateOne(
             { _id: new ObjectId(id) },
             {
@@ -1530,8 +1566,14 @@ async function run() {
               },
             },
           );
+   // 🔥 updated project আনো
+    const updatedProject = await projectsCollection.findOne({
+      _id: new ObjectId(id),
+    });
 
-          console.log("DELETE RESULT:", result);
+    // 🔥 socket emit করো (IMPORTANT)
+    io.to(id.toString()).emit("projectUpdated", updatedProject);
+          // console.log("DELETE RESULT:", result);
 
           res.send({ success: true, result });
         } catch (err) {
@@ -1962,9 +2004,9 @@ async function run() {
 
           let message = "";
           if (status === "approved") {
-            message = "A new member join to our team";
+            message =  `${name} (${email}) accepted your invitation and joined the team`;
           } else if (status === "rejected") {
-            message = "User reject your invitation";
+            message = `${name} (${email}) rejected your invitation`;
           }
 
           const notification = {
@@ -2339,7 +2381,7 @@ async function run() {
           // 🔥 5. CREATE NOTIFICATION
           const notification = {
             type: "invitation_send",
-            message: "A team manager invited you to their team",
+            message: `You are invited to join "${project.projectTitle || "a project"}" team  ${project.teamName}`,
 
             receiverId: receiverUser?._id || null,
             receiverEmail: email,
@@ -2384,13 +2426,43 @@ async function run() {
           await transporter.sendMail({
             from: '"DevFlow" <your_email@gmail.com>',
             to: email,
-            subject: "Project Invitation",
+            subject: ` Project Invitation: ${project.name || "Your Project"}`,
+
             html: `
-        <h3>You have been invited to a project</h3>
-        <a href="http://localhost:5173/invite/${projectId}">
+  <div style="font-family: Arial, sans-serif; background:#f4f6f8; padding:20px;">
+    
+    <div style="max-width:600px; margin:auto; background:white; padding:25px; border-radius:10px;">
+
+      <h2 style="color:#2d6cdf;">You are invited to a project</h2>
+
+      <p>Hello</p>
+
+      <p>
+        You have been invited to join a project by 
+        <b>${project.created_by}</b>.
+      </p>
+
+      <hr />
+
+      <h3> Project Details</h3>
+      <p><b>Project Name:</b> ${project.projectTitle || "N/A"}</p>
+      <p><b>Team Members:</b> ${project.teammember?.length || 0}</p>
+   
+
+      <div style="margin:20px 0;">
+        <a href="http://localhost:5173/developer_dashboard/invitations" 
+           style="background:#2d6cdf; color:white; padding:12px 20px; text-decoration:none; border-radius:6px; display:inline-block;">
           Join Project
         </a>
-      `,
+      </div>
+
+      <p style="font-size:12px; color:gray;">
+        If you did not expect this invitation, you can ignore this email.
+      </p>
+
+    </div>
+  </div>
+  `,
           });
 
           res.send({
@@ -2510,7 +2582,7 @@ async function run() {
           if (!user) {
             return res.send({
               success: false,
-              message: "User not found",
+              message: "User not found /notifications",
             });
           }
 
@@ -2676,7 +2748,7 @@ async function run() {
           // 🔥 3. CREATE NOTIFICATIONS
           const notifications = admins.map((admin) => ({
             type: "project_created",
-            message: "A project created, check for approval",
+            message: `New project created , project name "${projectTitle}" team name "${teamName}". Please check for approval.`,
 
             receiverId: admin._id,
             receiverEmail: admin.email,
@@ -2771,7 +2843,7 @@ async function run() {
         if (!user) {
           return res.send({
             success: false,
-            message: "User not found",
+            message: "User not found /user/:email",
           });
         }
 
