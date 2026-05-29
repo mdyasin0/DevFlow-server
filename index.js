@@ -171,8 +171,8 @@ async function run() {
     const verifyToken = (req, res, next) => {
       const token = req.cookies?.token;
 
-      console.log("🍪 Incoming Cookies:", req.cookies);
-      console.log("🔐 Token Found:", token);
+      // console.log("🍪 Incoming Cookies:", req.cookies);
+      // console.log("🔐 Token Found:", token);
 
       if (!token) {
         console.log("❌ AUTH FAIL: No token in cookies");
@@ -194,7 +194,7 @@ async function run() {
           });
         }
 
-        console.log("✅ TOKEN VERIFIED USER:", decoded);
+        // console.log("✅ TOKEN VERIFIED USER:", decoded);
 
         req.user = decoded;
         next();
@@ -621,51 +621,51 @@ async function run() {
           const id = req.params.id;
           const { role } = req.body;
 
-      // 🔹 Step 1: get user
-      const user = await usersCollection.findOne({
-        _id: new ObjectId(id),
-      });
+          // 🔹 Step 1: get user
+          const user = await usersCollection.findOne({
+            _id: new ObjectId(id),
+          });
 
-      if (!user) {
-        return res.send({
-          success: false,
-          message: "User not found",
-        });
-      }
+          if (!user) {
+            return res.send({
+              success: false,
+              message: "User not found",
+            });
+          }
 
-      const userEmail = user.email;
+          const userEmail = user.email;
 
-      // 🔹 Step 2: check in projects
-      const managerProject = await projectsCollection.findOne({
-        created_by: userEmail,
-      });
+          // 🔹 Step 2: check in projects
+          const managerProject = await projectsCollection.findOne({
+            created_by: userEmail,
+          });
 
-      const teamMemberProject = await projectsCollection.findOne({
-        "teammember.email": userEmail,
-      });
+          const teamMemberProject = await projectsCollection.findOne({
+            "teammember.email": userEmail,
+          });
 
-      // 🔹 Step 3: condition check
-      if (managerProject && teamMemberProject) {
-        return res.send({
-          success: false,
-          message:
-            "This user is a manager and also a team member of a project",
-        });
-      }
+          // 🔹 Step 3: condition check
+          if (managerProject && teamMemberProject) {
+            return res.send({
+              success: false,
+              message:
+                "This user is a manager and also a team member of a project",
+            });
+          }
 
-      if (managerProject) {
-        return res.send({
-          success: false,
-          message: "This user is a manager of a project",
-        });
-      }
+          if (managerProject) {
+            return res.send({
+              success: false,
+              message: "This user is a manager of a project",
+            });
+          }
 
-      if (teamMemberProject) {
-        return res.send({
-          success: false,
-          message: "This user is already a team member of a project",
-        });
-      }
+          if (teamMemberProject) {
+            return res.send({
+              success: false,
+              message: "This user is already a team member of a project",
+            });
+          }
 
           const result = await usersCollection.updateOne(
             { _id: new ObjectId(id) },
@@ -1149,122 +1149,139 @@ async function run() {
       },
     );
     // reopen , move done to running
-    app.patch(
-      "/reopen-task/:projectId",
-      verifyToken,
-      checkBlockedUser,
-      updateLastActive,
-      async (req, res) => {
-        try {
-          const { projectId } = req.params;
-          const { email, taskId } = req.body;
+  app.patch(
+  "/reopen-task/:projectId",
+  verifyToken,
+  checkBlockedUser,
+  async (req, res) => {
+    try {
+      const { projectId } = req.params;
+      const { taskId, email } = req.body;
+  // ================================
+      // 🔥 PREMIUM CHECK START
+      // ================================
+      const loginUser = await usersCollection.findOne({
+        email: req.user.email,
+      });
 
-          if (!email || !taskId) {
-            return res.send({
-              success: false,
-              message: "Missing required fields",
-            });
-          }
+      if (!loginUser) {
+        return res.send({
+          success: false,
+          message: "User not found",
+        });
+      }
 
-          const project = await projectsCollection.findOne({
-            _id: new ObjectId(projectId),
-          });
+      if (!loginUser.plan || loginUser.plan.type !== "premium") {
+        return res.send({
+          success: false,
+          message: "Upgrade to premium to reopen task 🚀",
+          code: "PLAN_RESTRICTED_REOPEN",
+        });
+      }
+      // 1. project find
+      const project = await projectsCollection.findOne({
+        _id: new ObjectId(projectId),
+      });
 
-          if (!project) {
-            return res.send({ success: false, message: "Project not found" });
-          }
+      if (!project) {
+        return res.send({
+          success: false,
+          message: "Project not found",
+        });
+      }
 
-          const member = project.teammember.find((m) => m.email === email);
+      // 2. member find
+      const member = project.teammember.find(
+        (m) => m.email === email
+      );
 
-          if (!member) {
-            return res.send({ success: false, message: "Member not found" });
-          }
+      if (!member) {
+        return res.send({
+          success: false,
+          message: "Member not found",
+        });
+      }
 
-          // 👉 user থেকে receiverId আনো
-          const user = await usersCollection.findOne({ email: email });
+      // 3. check task in DONE
+      const taskIndex = member.done.findIndex(
+        (t) => t.id === taskId
+      );
 
-          // 🔒 PLAN CHECK
-          if (!user?.plan || user?.plan?.type === "free") {
-            return res.status(403).send({
-              success: false,
-              message: "Upgrade your plan to use reopen feature",
-              code: "PLAN_RESTRICTED",
-            });
-          }
-          // 👉 find task in done
-          const task = member.done?.find((t) => t.id === taskId);
+      if (taskIndex === -1) {
+        return res.send({
+          success: false,
+          message: "No task found in done",
+        });
+      }
 
-          if (!task) {
-            return res.send({
-              success: false,
-              message: "Task not found in done",
-            });
-          }
+      // 4. task remove from done
+      const [task] = member.done.splice(taskIndex, 1);
 
-          // 👉 remove from done
-          await projectsCollection.updateOne(
-            { _id: new ObjectId(projectId) },
-            {
-              $pull: {
-                "teammember.$[m].done": { id: taskId },
-              },
-            },
-            { arrayFilters: [{ "m.email": email }] },
-          );
+      delete task.submittedAt;
 
-          // 👉 remove submittedAt when reopening
-          const updatedTask = { ...task };
-          delete updatedTask.submittedAt;
+      // 5. push into running
+      member.running.push(task);
 
-          // 👉 push to running
-          await projectsCollection.updateOne(
-            { _id: new ObjectId(projectId) },
-            {
-              $push: {
-                "teammember.$[m].running": updatedTask,
-              },
-            },
-            { arrayFilters: [{ "m.email": email }] },
-          );
-
-          // 👉 first few words extract
-          const taskPreview =
-            task.text?.split(" ").slice(0, 5).join(" ") + "...";
-          // 👉 notification তৈরি
-          const notification = {
-            type: "reopened_task",
-            message: `Manager reopen your task and your task moved from done to running status " ${taskPreview} "`,
-            receiverId: user?._id,
-            receiverEmail: email,
-            url: `/developer_dashboard/joined_team_details/${projectId}`, // ✅ dynamic
-            created_by: project.created_by,
-            created_time: new Date(),
-            read: false,
-          };
-
-          await notificationsCollection.insertOne(notification);
-          // 🔥 REAL-TIME SOCKET ADDED (ONLY THIS PART NEW)
-          io.to(user._id.toString()).emit("newNotification", {
-            _id: notification._id,
-            ...notification,
-          });
-          // 🔥 REAL-TIME PROJECT UPDATE (IMPORTANT FIX)
-          io.to(projectId).emit("projectUpdated", {
-            projectId,
-          });
-          return res.send({
-            success: true,
-            message: "Task reopened successfully",
-          });
-        } catch (err) {
-          return res.status(500).send({
-            success: false,
-            message: err.message,
-          });
+      // 6. update DB
+      await projectsCollection.updateOne(
+        { _id: new ObjectId(projectId) },
+        {
+          $set: {
+            teammember: project.teammember,
+          },
         }
-      },
-    );
-    // delete project
+      );
+
+      // ================================
+      // 🔥 NOTIFICATION START
+      // ================================
+
+      // 👉 receiver user খুঁজে বের করো
+      const receiverUser = await usersCollection.findOne({
+        email: email,
+      });
+
+      if (receiverUser) {
+        // 👉 task first 3 words
+        const first3Words = task.text
+          ?.replace(/<br\/>/g, " ")
+          .split(" ")
+          .slice(0, 3)
+          .join(" ");
+
+        await notificationsCollection.insertOne({
+          type: "task_reopen",
+          message: `Manager reopen your task "${first3Words}..."`,
+          receiverId: receiverUser._id,
+          receiverEmail: receiverUser.email,
+          url: `/developer_dashboard/joined_team_details/${projectId}`,
+          created_by: req.user.email, // login user
+          created_time: new Date(),
+          read: false,
+        });
+      }
+
+      // ================================
+      // 🔥 NOTIFICATION END
+      // ================================
+
+      // 7. socket emit
+      io.to(projectId).emit("projectUpdated", project);
+
+      res.send({
+        success: true,
+        message: "Task moved to running",
+        data: project,
+      });
+    } catch (error) {
+      res.send({
+        success: false,
+        message: error.message,
+      });
+    }
+  }
+);
+  
 
     app.delete(
       "/projects/:id",
@@ -1719,7 +1736,7 @@ async function run() {
       async (req, res) => {
         try {
           const { projectId } = req.params;
-          const { email, type, taskId } = req.body;
+          const { email, type, taskId, manager } = req.body;
 
           // 👉 project data আনো (created_by দরকার)
           const project = await projectsCollection.findOne({
@@ -1733,9 +1750,9 @@ async function run() {
             });
           }
 
-          // 👉 user থেকে receiverId আনো
-          const user = await usersCollection.findOne({ email: email });
-
+          // // 👉 user থেকে receiverId আনো
+          const user = await usersCollection.findOne({ email: manager });
+          // console.log(user)
           // 🔒 PLAN CHECK
           if (!user?.plan || user?.plan?.type === "free") {
             return res.status(403).send({
