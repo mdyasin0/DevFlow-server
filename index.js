@@ -621,6 +621,52 @@ async function run() {
           const id = req.params.id;
           const { role } = req.body;
 
+      // 🔹 Step 1: get user
+      const user = await usersCollection.findOne({
+        _id: new ObjectId(id),
+      });
+
+      if (!user) {
+        return res.send({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      const userEmail = user.email;
+
+      // 🔹 Step 2: check in projects
+      const managerProject = await projectsCollection.findOne({
+        created_by: userEmail,
+      });
+
+      const teamMemberProject = await projectsCollection.findOne({
+        "teammember.email": userEmail,
+      });
+
+      // 🔹 Step 3: condition check
+      if (managerProject && teamMemberProject) {
+        return res.send({
+          success: false,
+          message:
+            "This user is a manager and also a team member of a project",
+        });
+      }
+
+      if (managerProject) {
+        return res.send({
+          success: false,
+          message: "This user is a manager of a project",
+        });
+      }
+
+      if (teamMemberProject) {
+        return res.send({
+          success: false,
+          message: "This user is already a team member of a project",
+        });
+      }
+
           const result = await usersCollection.updateOne(
             { _id: new ObjectId(id) },
             {
@@ -1181,11 +1227,13 @@ async function run() {
             { arrayFilters: [{ "m.email": email }] },
           );
 
+          // 👉 first few words extract
+          const taskPreview =
+            task.text?.split(" ").slice(0, 5).join(" ") + "...";
           // 👉 notification তৈরি
           const notification = {
             type: "reopened_task",
-            message:
-              "Manager reopen your task and your task moved from done to running status",
+            message: `Manager reopen your task and your task moved from done to running status " ${taskPreview} "`,
             receiverId: user?._id,
             receiverEmail: email,
             url: `/developer_dashboard/joined_team_details/${projectId}`, // ✅ dynamic
@@ -1566,13 +1614,13 @@ async function run() {
               },
             },
           );
-   // 🔥 updated project আনো
-    const updatedProject = await projectsCollection.findOne({
-      _id: new ObjectId(id),
-    });
+          // 🔥 updated project আনো
+          const updatedProject = await projectsCollection.findOne({
+            _id: new ObjectId(id),
+          });
 
-    // 🔥 socket emit করো (IMPORTANT)
-    io.to(id.toString()).emit("projectUpdated", updatedProject);
+          // 🔥 socket emit করো (IMPORTANT)
+          io.to(id.toString()).emit("projectUpdated", updatedProject);
           // console.log("DELETE RESULT:", result);
 
           res.send({ success: true, result });
@@ -1843,10 +1891,13 @@ async function run() {
               },
             },
           );
+          const words = text.split(" ");
+          const shortText =
+            words.length > 5 ? words.slice(0, 5).join(" ") + "..." : text;
 
           const notification = {
             type: "work_assign",
-            message: "Manager assigned a new task",
+            message: `Manager assigned a new task " ${shortText} "`,
             receiverId: user?._id,
             receiverEmail: email,
             url: `/developer_dashboard/joined_team_details/${projectId}`,
@@ -2004,7 +2055,7 @@ async function run() {
 
           let message = "";
           if (status === "approved") {
-            message =  `${name} (${email}) accepted your invitation and joined the team`;
+            message = `${name} (${email}) accepted your invitation and joined the team`;
           } else if (status === "rejected") {
             message = `${name} (${email}) rejected your invitation`;
           }
