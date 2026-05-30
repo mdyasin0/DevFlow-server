@@ -9,9 +9,8 @@ const app = express();
 app.use(cookieParser());
 app.use(
   cors({
-    origin:
-      // "https://devflow-32d85.web.app",
-      "http://localhost:5173",
+    origin:"https://devflow-32d85.web.app",
+      // "http://localhost:5173",
     credentials: true,
   }),
 );
@@ -30,19 +29,19 @@ const io = new Server(server, {
 });
 
 io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
+  // console.log("User connected:", socket.id);
 
   // user join room (IMPORTANT for notification)
   socket.on("join", (userId) => {
     socket.join(userId.toString());
-    console.log("User joined room:", userId);
+    // console.log("User joined room:", userId);
   });
   socket.on("joinProject", (projectId) => {
     socket.join(projectId.toString());
-    console.log("Joined project room:", projectId);
+    // console.log("Joined project room:", projectId);
   });
   socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
+    // console.log("User disconnected:", socket.id);
   });
 });
 
@@ -107,11 +106,11 @@ async function run() {
           { expiresIn: "7d" },
         );
 
-        // 🔥 COOKIE SET (IMPORTANT CHANGE)
+        //  COOKIE SET (IMPORTANT CHANGE)
         res.cookie("token", token, {
           httpOnly: true, // JS access করতে পারবে না (secure)
-          secure: false, // Render HTTPS
-          sameSite: "strict",
+          secure: true, // Render HTTPS
+          sameSite: "none",
           maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
         });
 
@@ -148,7 +147,7 @@ async function run() {
 
           req.user = decoded; // store user info
 
-          // 🔥 UPDATE lastActiveAt
+          //  UPDATE lastActiveAt
           await usersCollection.updateOne(
             { email: decoded.email },
             {
@@ -171,11 +170,11 @@ async function run() {
     const verifyToken = (req, res, next) => {
       const token = req.cookies?.token;
 
-      // console.log("🍪 Incoming Cookies:", req.cookies);
-      // console.log("🔐 Token Found:", token);
+      // console.log(" Incoming Cookies:", req.cookies);
+      // console.log(" Token Found:", token);
 
       if (!token) {
-        console.log("❌ AUTH FAIL: No token in cookies");
+        // console.log(" AUTH FAIL: No token in cookies");
 
         return res.status(401).send({
           success: false,
@@ -185,7 +184,7 @@ async function run() {
 
       jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
         if (err) {
-          console.log("❌ TOKEN ERROR:", err.message);
+          // console.log(" TOKEN ERROR:", err.message);
 
           return res.status(403).send({
             success: false,
@@ -194,7 +193,7 @@ async function run() {
           });
         }
 
-        // console.log("✅ TOKEN VERIFIED USER:", decoded);
+        // console.log(" TOKEN VERIFIED USER:", decoded);
 
         req.user = decoded;
         next();
@@ -221,13 +220,13 @@ async function run() {
           });
         }
 
-        // 🔥 BLOCK CHECK + AUTO LOGOUT STYLE
+        //  BLOCK CHECK + AUTO LOGOUT STYLE
         if (user.isBlocked) {
-          // 👉 cookie clear (same as logout API)
+          //  cookie clear (same as logout API)
           res.clearCookie("token", {
             httpOnly: true,
-            secure: false, // Render HTTPS
-            sameSite: "strict",
+            secure: true, // Render HTTPS
+            sameSite: "none",
           });
 
           return res.status(403).send({
@@ -250,7 +249,7 @@ async function run() {
 
     // ======================= MAIN CRON =======================
     cron.schedule("*/5 * * * *", async () => {
-      console.log("⏰ Checking deadlines...");
+      // console.log(" Checking deadlines...");
       await checkDeadlines();
     });
 
@@ -264,7 +263,7 @@ async function run() {
           const allTasks = [...(member.todo || []), ...(member.running || [])];
 
           for (const task of allTasks) {
-            // ❗ ignore done task
+            //  ignore done task
             if (task.submittedAt) continue;
 
             if (!task.deadline) continue;
@@ -273,7 +272,7 @@ async function run() {
             const diffMs = deadline - now;
             const diffHours = diffMs / (1000 * 60 * 60);
 
-            // ❗ expired skip
+            //  expired skip
             if (diffHours < 0) continue;
 
             await handleReminder({
@@ -294,9 +293,9 @@ async function run() {
       });
 
       if (!manager || manager.plan?.type !== "premium") {
-        return; // ❌ skip reminder পুরো project এর জন্য
+        return; //  skip reminder পুরো project এর জন্য
       }
-      // 👉 reminder flags init
+      //  reminder flags init
       if (!task.reminders) {
         task.reminders = {
           h24: false,
@@ -310,7 +309,7 @@ async function run() {
         await createNotification(member, project, hour);
         await sendEmail(member.email, hour, project._id);
 
-        // 👉 realtime notification
+        // realtime notification
         io.to(member.email).emit("newNotification");
       };
 
@@ -390,7 +389,7 @@ async function run() {
       await transporter.sendMail({
         from: "mdyasin01928364@gmail.com",
         to: email,
-        subject: "⏰ Deadline Reminder",
+        subject: " Deadline Reminder",
         html: `
       <h3>Your task deadline is in ${hour} hours</h3>
       <p>Don't forget to complete your task on time.</p>
@@ -412,7 +411,7 @@ async function run() {
     app.post("/project-message", verifyToken, async (req, res) => {
       try {
         const { projectId, message, senderEmail, senderName } = req.body;
-        // 🔥 project find
+        //  project find
         const project = await projectsCollection.findOne({
           _id: new ObjectId(projectId),
         });
@@ -424,12 +423,12 @@ async function run() {
           });
         }
 
-        // 🔥 manager find
+        //  manager find
         const manager = await usersCollection.findOne({
           email: project.created_by,
         });
 
-        // 🔒 PLAN CHECK (CORRECT)
+        //  PLAN CHECK (CORRECT)
         if (!manager?.plan || manager?.plan?.type === "free") {
           return res.status(403).send({
             success: false,
@@ -452,7 +451,7 @@ async function run() {
           ...newMessage,
         };
 
-        // 🔥 realtime
+        //  realtime
         io.to(projectId).emit("newMessage", fullMessage);
 
         res.send({ success: true, data: fullMessage });
@@ -507,7 +506,7 @@ async function run() {
           _id: new ObjectId(id),
         });
 
-        // 🔥 realtime
+        // realtime
         io.to(existing.projectId).emit("updateMessage", updated);
 
         res.send({ success: true, data: updated });
@@ -550,8 +549,8 @@ async function run() {
     app.post("/logout", (req, res) => {
       res.clearCookie("token", {
         httpOnly: true,
-        secure: false, // Render HTTPS
-        sameSite: "strict",
+        secure: true, // Render HTTPS
+        sameSite: "none",
       });
 
       res.send({ success: true });
@@ -621,7 +620,7 @@ async function run() {
           const id = req.params.id;
           const { role } = req.body;
 
-          // 🔹 Step 1: get user
+          //  Step 1: get user
           const user = await usersCollection.findOne({
             _id: new ObjectId(id),
           });
@@ -635,7 +634,7 @@ async function run() {
 
           const userEmail = user.email;
 
-          // 🔹 Step 2: check in projects
+          //  Step 2: check in projects
           const managerProject = await projectsCollection.findOne({
             created_by: userEmail,
           });
@@ -644,7 +643,7 @@ async function run() {
             "teammember.email": userEmail,
           });
 
-          // 🔹 Step 3: condition check
+          // Step 3: condition check
           if (managerProject && teamMemberProject) {
             return res.send({
               success: false,
@@ -710,7 +709,7 @@ async function run() {
 
         const now = new Date();
 
-        // 🔥 CASE 1: Already free
+        //  CASE 1: Already free
         if (user.plan?.type === "free") {
           return res.send({
             success: false,
@@ -718,7 +717,7 @@ async function run() {
           });
         }
 
-        // 🚫 CASE 2: Premium active → BLOCK downgrade
+        //  CASE 2: Premium active → BLOCK downgrade
         if (
           user.plan?.type === "premium" &&
           user.plan.expiresAt &&
@@ -731,7 +730,7 @@ async function run() {
           });
         }
 
-        // 🔥 CASE 3: expired → auto free (ONLY allowed case)
+        // CASE 3: expired → auto free (ONLY allowed case)
         if (
           user.plan?.type === "premium" &&
           user.plan.expiresAt &&
@@ -923,7 +922,7 @@ async function run() {
             });
           }
 
-          // 🔥 1. project find
+          //  1. project find
           const project = await projectsCollection.findOne({
             _id: new ObjectId(id),
           });
@@ -935,13 +934,13 @@ async function run() {
             });
           }
 
-          // 🔥 2. update status
+          //  2. update status
           await projectsCollection.updateOne(
             { _id: new ObjectId(id) },
             { $set: { status } },
           );
           const projectInfo = `project name : ${project.projectTitle}  Team name : ${project.teamName}`;
-          // 🔥 3. message set
+          //  3. message set
           let message = "";
           if (status === "approved") {
             message = `Your project has been approved ${projectInfo}`;
@@ -951,7 +950,7 @@ async function run() {
             message = "Project status updated";
           }
 
-          // 🔥 4. receiver user find
+          //  4. receiver user find
           const receiverUser = await usersCollection.findOne({
             email: project.created_by,
           });
@@ -963,13 +962,13 @@ async function run() {
             });
           }
 
-          // 🔥 5. notification object (UPDATED ✅)
+          //  5. notification object (UPDATED )
           const notification = {
             type: "project_status_updated",
             message,
 
-            receiverId: receiverUser._id, // আগের মতোই থাকবে
-            receiverEmail: receiverUser.email, // 🔥 NEW FIELD
+            receiverId: receiverUser._id,
+            receiverEmail: receiverUser.email, // NEW FIELD
 
             url: "/developer_dashboard/created_project",
 
@@ -978,7 +977,7 @@ async function run() {
             read: false,
           };
 
-          // 🔥 6. save
+          //  6. save
           const result = await notificationsCollection.insertOne(notification);
 
           const fullNotification = {
@@ -993,8 +992,8 @@ async function run() {
             projectId: id,
             status,
           });
-          console.log("USER ROOM:", receiverUser._id.toString());
-          console.log("EMITTING STATUS:", status);
+          // console.log("USER ROOM:", receiverUser._id.toString());
+          // console.log("EMITTING STATUS:", status);
           res.send({
             success: true,
             message: `Project ${status} successfully`,
@@ -1104,21 +1103,21 @@ async function run() {
 
           const result = await projectsCollection.updateOne(filter, updateDoc);
 
-          // 👉 শুধু team member email (created_by বাদ)
+         
           const memberEmails = project.teammember.map((m) => m.email);
 
-          // 👉 users collection থেকে সব user আনো
+      
           const users = await usersCollection
             .find({ email: { $in: memberEmails } })
             .toArray();
 
-          // 👉 email → userId map
+          // email → userId map
           const userMap = {};
           users.forEach((u) => {
             userMap[u.email] = u._id;
           });
 
-          // 👉 bulk notification তৈরি
+          // bulk notification 
           const notifications = memberEmails.map((email) => ({
             type: "update_team_project_information",
             message: "Manager updated team project information",
@@ -1130,7 +1129,7 @@ async function run() {
             read: false,
           }));
 
-          // 👉 insertMany
+          // insertMany
           if (notifications.length > 0) {
             await notificationsCollection.insertMany(notifications);
           }
@@ -1149,139 +1148,134 @@ async function run() {
       },
     );
     // reopen , move done to running
-  app.patch(
-  "/reopen-task/:projectId",
-  verifyToken,
-  checkBlockedUser,
-  async (req, res) => {
-    try {
-      const { projectId } = req.params;
-      const { taskId, email } = req.body;
-  // ================================
-      // 🔥 PREMIUM CHECK START
-      // ================================
-      const loginUser = await usersCollection.findOne({
-        email: req.user.email,
-      });
+    app.patch(
+      "/reopen-task/:projectId",
+      verifyToken,
+      checkBlockedUser,
+      async (req, res) => {
+        try {
+          const { projectId } = req.params;
+          const { taskId, email } = req.body;
+          // ================================
+          //  PREMIUM CHECK START
+          // ================================
+          const loginUser = await usersCollection.findOne({
+            email: req.user.email,
+          });
 
-      if (!loginUser) {
-        return res.send({
-          success: false,
-          message: "User not found",
-        });
-      }
+          if (!loginUser) {
+            return res.send({
+              success: false,
+              message: "User not found",
+            });
+          }
 
-      if (!loginUser.plan || loginUser.plan.type !== "premium") {
-        return res.send({
-          success: false,
-          message: "Upgrade to premium to reopen task 🚀",
-          code: "PLAN_RESTRICTED_REOPEN",
-        });
-      }
-      // 1. project find
-      const project = await projectsCollection.findOne({
-        _id: new ObjectId(projectId),
-      });
+          if (!loginUser.plan || loginUser.plan.type !== "premium") {
+            return res.send({
+              success: false,
+              message: "Upgrade to premium to reopen task 🚀",
+              code: "PLAN_RESTRICTED_REOPEN",
+            });
+          }
+          // 1. project find
+          const project = await projectsCollection.findOne({
+            _id: new ObjectId(projectId),
+          });
 
-      if (!project) {
-        return res.send({
-          success: false,
-          message: "Project not found",
-        });
-      }
+          if (!project) {
+            return res.send({
+              success: false,
+              message: "Project not found",
+            });
+          }
 
-      // 2. member find
-      const member = project.teammember.find(
-        (m) => m.email === email
-      );
+          // 2. member find
+          const member = project.teammember.find((m) => m.email === email);
 
-      if (!member) {
-        return res.send({
-          success: false,
-          message: "Member not found",
-        });
-      }
+          if (!member) {
+            return res.send({
+              success: false,
+              message: "Member not found",
+            });
+          }
 
-      // 3. check task in DONE
-      const taskIndex = member.done.findIndex(
-        (t) => t.id === taskId
-      );
+          // 3. check task in DONE
+          const taskIndex = member.done.findIndex((t) => t.id === taskId);
 
-      if (taskIndex === -1) {
-        return res.send({
-          success: false,
-          message: "No task found in done",
-        });
-      }
+          if (taskIndex === -1) {
+            return res.send({
+              success: false,
+              message: "No task found in done",
+            });
+          }
 
-      // 4. task remove from done
-      const [task] = member.done.splice(taskIndex, 1);
+          // 4. task remove from done
+          const [task] = member.done.splice(taskIndex, 1);
 
-      delete task.submittedAt;
+          delete task.submittedAt;
 
-      // 5. push into running
-      member.running.push(task);
+          // 5. push into running
+          member.running.push(task);
 
-      // 6. update DB
-      await projectsCollection.updateOne(
-        { _id: new ObjectId(projectId) },
-        {
-          $set: {
-            teammember: project.teammember,
-          },
+          // 6. update DB
+          await projectsCollection.updateOne(
+            { _id: new ObjectId(projectId) },
+            {
+              $set: {
+                teammember: project.teammember,
+              },
+            },
+          );
+
+          // ================================
+          //  NOTIFICATION START
+          // ================================
+
+          //  receiver user 
+          const receiverUser = await usersCollection.findOne({
+            email: email,
+          });
+
+          if (receiverUser) {
+            //  task first 3 words
+            const first3Words = task.text
+              ?.replace(/<br\/>/g, " ")
+              .split(" ")
+              .slice(0, 3)
+              .join(" ");
+
+            await notificationsCollection.insertOne({
+              type: "task_reopen",
+              message: `Manager reopen your task "${first3Words}..."`,
+              receiverId: receiverUser._id,
+              receiverEmail: receiverUser.email,
+              url: `/developer_dashboard/joined_team_details/${projectId}`,
+              created_by: req.user.email, // login user
+              created_time: new Date(),
+              read: false,
+            });
+          }
+
+          // ================================
+          //  NOTIFICATION END
+          // ================================
+
+          // 7. socket emit
+          io.to(projectId).emit("projectUpdated", project);
+
+          res.send({
+            success: true,
+            message: "Task moved to running",
+            data: project,
+          });
+        } catch (error) {
+          res.send({
+            success: false,
+            message: error.message,
+          });
         }
-      );
-
-      // ================================
-      // 🔥 NOTIFICATION START
-      // ================================
-
-      // 👉 receiver user খুঁজে বের করো
-      const receiverUser = await usersCollection.findOne({
-        email: email,
-      });
-
-      if (receiverUser) {
-        // 👉 task first 3 words
-        const first3Words = task.text
-          ?.replace(/<br\/>/g, " ")
-          .split(" ")
-          .slice(0, 3)
-          .join(" ");
-
-        await notificationsCollection.insertOne({
-          type: "task_reopen",
-          message: `Manager reopen your task "${first3Words}..."`,
-          receiverId: receiverUser._id,
-          receiverEmail: receiverUser.email,
-          url: `/developer_dashboard/joined_team_details/${projectId}`,
-          created_by: req.user.email, // login user
-          created_time: new Date(),
-          read: false,
-        });
-      }
-
-      // ================================
-      // 🔥 NOTIFICATION END
-      // ================================
-
-      // 7. socket emit
-      io.to(projectId).emit("projectUpdated", project);
-
-      res.send({
-        success: true,
-        message: "Task moved to running",
-        data: project,
-      });
-    } catch (error) {
-      res.send({
-        success: false,
-        message: error.message,
-      });
-    }
-  }
-);
-  
+      },
+    );
 
     app.delete(
       "/projects/:id",
@@ -1291,12 +1285,12 @@ async function run() {
       async (req, res) => {
         try {
           const id = req.params.id;
-          // 🔥 USER GET
+          //  USER GET
           const user = await usersCollection.findOne({
             email: req.user.email,
           });
 
-          // ❌ যদি free user হয় → delete block
+          
           if (user?.plan?.type === "free") {
             return res.status(403).send({
               success: false,
@@ -1351,7 +1345,7 @@ async function run() {
               await notificationsCollection.insertMany(notifications);
             }
 
-            // 🔥 SOCKET PART (NEW ADDED)
+            //  SOCKET PART (NEW ADDED)
             members.forEach((member) => {
               const receiverId = userMap[member.email];
 
@@ -1465,13 +1459,13 @@ async function run() {
             },
             { arrayFilters: [{ "m.email": email }] },
           );
-          // 🔥 NEW PART START
+          // NEW PART START
           const updatedProject = await projectsCollection.findOne({
             _id: new ObjectId(projectId),
           });
 
           io.to(projectId).emit("projectUpdated", updatedProject);
-          // 🔥 NEW PART END
+          //  NEW PART END
           return res.send({
             success: true,
             message: "Task moved successfully",
@@ -1522,12 +1516,12 @@ async function run() {
         try {
           const { projectId, email } = req.params;
           const decodedEmail = decodeURIComponent(email);
-          // 👉 manager (logged in user) বের করো
+          // manager (logged in user) 
           const currentUser = await usersCollection.findOne({
-            email: req.user.email, // verifyToken থেকে আসবে
+            email: req.user.email,
           });
 
-          // 🔒 PLAN CHECK (IMPORTANT)
+          //  PLAN CHECK (IMPORTANT)
           if (!currentUser?.plan || currentUser?.plan?.type === "free") {
             return res.status(403).send({
               success: false,
@@ -1571,7 +1565,7 @@ async function run() {
             notification,
           );
 
-          // 🔥 REALTIME PROJECT UPDATE (MAIN FIX)
+          //  REALTIME PROJECT UPDATE (MAIN FIX)
           const updatedProject = await projectsCollection.findOne({
             _id: new ObjectId(projectId),
           });
@@ -1599,10 +1593,10 @@ async function run() {
       updateLastActive,
       async (req, res) => {
         const { id } = req.params;
-        const email = decodeURIComponent(req.params.email); // ✅ important
+        const email = decodeURIComponent(req.params.email); //  important
 
         try {
-          // 🔥 1. user বের করো (logged-in user)
+         
           const user = await usersCollection.findOne({
             email: req.user.email,
           });
@@ -1614,7 +1608,7 @@ async function run() {
             });
           }
 
-          // 🚫 2. FREE plan block
+          //  2. FREE plan block
           if (user.plan?.type === "free") {
             return res.status(403).send({
               success: false,
@@ -1631,12 +1625,12 @@ async function run() {
               },
             },
           );
-          // 🔥 updated project আনো
+          // updated project 
           const updatedProject = await projectsCollection.findOne({
             _id: new ObjectId(id),
           });
 
-          // 🔥 socket emit করো (IMPORTANT)
+          // socket emit  (IMPORTANT)
           io.to(id.toString()).emit("projectUpdated", updatedProject);
           // console.log("DELETE RESULT:", result);
 
@@ -1657,7 +1651,7 @@ async function run() {
           const { projectId } = req.params;
           const { email, type, taskId, text, newAttachments } = req.body;
 
-          // 👉 project data (created_by দরকার)
+          //  project data (created_by )
           const project = await projectsCollection.findOne({
             _id: new ObjectId(projectId),
           });
@@ -1669,7 +1663,7 @@ async function run() {
             });
           }
 
-          // 👉 user থেকে receiverId আনো
+        
           const user = await usersCollection.findOne({ email: email });
           const isFreeUser = !user?.plan || user?.plan?.type === "free";
 
@@ -1680,7 +1674,7 @@ async function run() {
               message: "File upload is only for Pro users",
             });
           }
-          // 👉 task update
+          //  task update
           const result = await projectsCollection.updateOne(
             { _id: new ObjectId(projectId) },
             {
@@ -1698,7 +1692,7 @@ async function run() {
             },
           );
 
-          // 👉 notification তৈরি
+          //  notification 
           const notification = {
             type: "updated_task",
             message: "Manager update your task",
@@ -1713,7 +1707,7 @@ async function run() {
           const savedNotification =
             await notificationsCollection.insertOne(notification);
 
-          // 🚀 ONLY ADD (REALTIME SOCKET)
+          //  ONLY ADD (REALTIME SOCKET)
           io.to(user._id.toString()).emit("newNotification", {
             _id: savedNotification.insertedId,
             ...notification,
@@ -1738,7 +1732,6 @@ async function run() {
           const { projectId } = req.params;
           const { email, type, taskId, manager } = req.body;
 
-          // 👉 project data আনো (created_by দরকার)
           const project = await projectsCollection.findOne({
             _id: new ObjectId(projectId),
           });
@@ -1750,10 +1743,10 @@ async function run() {
             });
           }
 
-          // // 👉 user থেকে receiverId আনো
+          // // user থেকে receiverId আনো
           const user = await usersCollection.findOne({ email: manager });
           // console.log(user)
-          // 🔒 PLAN CHECK
+          //  PLAN CHECK
           if (!user?.plan || user?.plan?.type === "free") {
             return res.status(403).send({
               success: false,
@@ -1761,7 +1754,7 @@ async function run() {
               code: "PLAN_RESTRICTED for delete",
             });
           }
-          // 👉 task delete
+          //  task delete
           const result = await projectsCollection.updateOne(
             { _id: new ObjectId(projectId) },
             {
@@ -1774,7 +1767,7 @@ async function run() {
             },
           );
 
-          // 👉 notification তৈরি
+          //  notification 
           const notification = {
             type: "task_delete",
             message: "Manager delete your task",
@@ -1789,7 +1782,7 @@ async function run() {
           const savedNotification =
             await notificationsCollection.insertOne(notification);
 
-          // 🔥 ONLY ADD THIS (REALTIME SOCKET)
+          //  ONLY ADD THIS (REALTIME SOCKET)
           io.to(user?._id?.toString()).emit("newNotification", {
             _id: savedNotification.insertedId,
             ...notification,
@@ -1830,7 +1823,7 @@ async function run() {
             priority,
             createdAt: new Date(),
             attachments: attachments || [],
-            // 🔥 ADD THIS
+            //  ADD THIS
             reminders: {
               h24: false,
               h12: false,
@@ -1862,7 +1855,7 @@ async function run() {
           }
 
           const user = await usersCollection.findOne({ email: email });
-          // 🔒 PLAN + TASK LIMIT CHECK
+          //  PLAN + TASK LIMIT CHECK
           const isFreeUser = !user?.plan || user?.plan?.type === "free";
           if (isFreeUser && attachments?.length > 0) {
             return res.status(403).send({
@@ -1871,7 +1864,7 @@ async function run() {
               message: "File upload is only for Pro users",
             });
           }
-          // 🔒 CHARACTER LIMIT
+          //  CHARACTER LIMIT
           if (isFreeUser && text.length > 500) {
             return res.status(403).send({
               success: false,
@@ -1880,7 +1873,7 @@ async function run() {
             });
           }
           if (isFreeUser) {
-            // 👉 project এর total task count বের করো
+           
             let totalTasks = 0;
 
             project.teammember.forEach((member) => {
@@ -1923,10 +1916,10 @@ async function run() {
             read: false,
           };
 
-          // 🔥 1. SAVE (same as before)
+          //  1. SAVE (same as before)
           const saved = await notificationsCollection.insertOne(notification);
 
-          // 🔥 2. REALTIME SOCKET ADD (ONLY NEW PART)
+          //  2. REALTIME SOCKET ADD (ONLY NEW PART)
           const fullNotification = {
             _id: saved.insertedId,
             ...notification,
@@ -1936,7 +1929,7 @@ async function run() {
           io.to(projectId).emit("projectUpdated", {
             projectId,
           });
-          // 🔥 response same
+          //  response same
           res.send({
             success: true,
             message: "Task added successfully",
@@ -2018,7 +2011,7 @@ async function run() {
             });
           }
 
-          // 2. যদি approved হয় → teammember এ add
+          // 2. if approved  → teammember এ add
           if (status === "approved") {
             const user = await usersCollection.findOne({
               email: project.created_by,
@@ -2026,12 +2019,12 @@ async function run() {
 
             const currentMembers = project.teammember?.length || 0;
 
-            // ✅ FREE PLAN LIMIT CHECK
+            //  FREE PLAN LIMIT CHECK
             if (user?.plan?.type === "free" && currentMembers >= 5) {
               return res.status(403).send({
                 success: false,
                 message:
-                  "Team member reached maximum limit. Please ask your manager to upgrade their plan 🚀",
+                  "Team member reached maximum limit. Please ask your manager to upgrade their plan ",
                 code: "TEAM_LIMIT_REACHED",
               });
             }
@@ -2064,7 +2057,7 @@ async function run() {
             },
           );
 
-          // 🔥 3. NOTIFICATION LOGIC (UNCHANGED)
+          //  3. NOTIFICATION LOGIC (UNCHANGED)
 
           const receiverUser = await usersCollection.findOne({
             email: project.created_by,
@@ -2091,13 +2084,13 @@ async function run() {
             read: false,
           };
 
-          // 🔥 4. SAVE
+          //  4. SAVE
           const result = await notificationsCollection.insertOne(notification);
 
-          // 🔥 5. REALTIME SOCKET (ADDED ✅ ONLY THIS PART)
+          //  5. REALTIME SOCKET (ADDED  ONLY THIS PART)
           if (receiverUser?._id) {
             const fullNotification = {
-              _id: result.insertedId, // 🔥 important
+              _id: result.insertedId, //  important
               ...notification,
             };
 
@@ -2106,12 +2099,12 @@ async function run() {
               fullNotification,
             );
           }
-          // 🔥 6. REALTIME PROJECT UPDATE (NEW ADD)
+          //  6. REALTIME PROJECT UPDATE (NEW ADD)
           const updatedProject = await projectsCollection.findOne({
             _id: new ObjectId(projectId),
           });
 
-          // যাদের project page open আছে সবাই update পাবে
+          
           io.to(projectId.toString()).emit("projectUpdated", updatedProject);
 
           res.send({
@@ -2126,7 +2119,7 @@ async function run() {
         }
       },
     );
-    // 🔥 CHECK USER PLAN
+    //  CHECK USER PLAN
     app.get("/plan/check/:email", async (req, res) => {
       try {
         const { email } = req.params;
@@ -2194,15 +2187,14 @@ async function run() {
           return res.status(400).send("Missing session_id");
         }
 
-        // 🔥 Stripe থেকে real session আনতেছি
         const session = await stripe.checkout.sessions.retrieve(session_id);
 
-        // ❗ Security check 1
+        //  Security check 1
         if (session.status !== "complete") {
           return res.send("Payment not completed");
         }
 
-        // ❗ Security check 2 (VERY IMPORTANT)
+        //  Security check 2 (VERY IMPORTANT)
         if (session.customer_email !== email) {
           return res.send("Invalid user");
         }
@@ -2248,7 +2240,7 @@ async function run() {
         const diffDays = Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
 
         // ================================
-        // 🔴 CASE 1: EXPIRED → FREE
+        //  CASE 1: EXPIRED → FREE
         // ================================
         if (diffDays <= 0) {
           await usersCollection.updateOne(
@@ -2278,7 +2270,7 @@ async function run() {
 
           await notificationsCollection.insertOne(notification);
 
-          // SOCKET EMIT 🔥
+          // SOCKET EMIT 
           io.to(user._id.toString()).emit("notification", notification);
 
           // EMAIL (direct nodemailer)
@@ -2299,7 +2291,7 @@ async function run() {
         }
 
         // ================================
-        // 🟡 CASE 2: REMINDER (1–7 days)
+        // CASE 2: REMINDER (1–7 days)
         // ================================
         if (diffDays > 0 && diffDays <= 7) {
           const message = `Your plan will expire soon. Remaining ${diffDays} days`;
@@ -2318,7 +2310,7 @@ async function run() {
           // DB SAVE
           await notificationsCollection.insertOne(notification);
 
-          // SOCKET REALTIME 🔥
+          // SOCKET REALTIME 
           io.to(user._id.toString()).emit("notification", notification);
 
           // EMAIL SEND
@@ -2380,7 +2372,7 @@ async function run() {
           const teamMemberCount = project.teammember?.length || 0;
           const inviteCount = project.invite_email?.length || 0;
 
-          // 🔥 RULE 1: TEAM LIMIT
+          //  RULE 1: TEAM LIMIT
           if (planType === "free" && teamMemberCount >= 5) {
             return res.status(403).send({
               success: false,
@@ -2390,7 +2382,7 @@ async function run() {
             });
           }
 
-          // 🔥 RULE 2: INVITE LIMIT
+          //  RULE 2: INVITE LIMIT
           if (planType === "free" && inviteCount >= 20) {
             return res.status(403).send({
               success: false,
@@ -2400,7 +2392,7 @@ async function run() {
             });
           }
 
-          // 2. check already invited কিনা
+          // 2. check already invited 
           const existingInvite = project.invite_email.find(
             (item) => item.email === email,
           );
@@ -2410,7 +2402,7 @@ async function run() {
               return res.send({
                 success: false,
                 message:
-                  "Already invitation sent. Please tell your team member to accept the invitation.",
+                  "Already invitation sent. Please tell your team member to accept the invitation.If you want to send again by this email, delete the email from invitation list first.",
               });
             }
 
@@ -2443,10 +2435,10 @@ async function run() {
             },
           );
 
-          // 🔥 4. CHECK USER EXIST (for notification)
+          // 4. CHECK USER EXIST (for notification)
           const receiverUser = await usersCollection.findOne({ email });
 
-          // 🔥 5. CREATE NOTIFICATION
+          // 5. CREATE NOTIFICATION
           const notification = {
             type: "invitation_send",
             message: `You are invited to join "${project.projectTitle || "a project"}" team  ${project.teamName}`,
@@ -2463,10 +2455,10 @@ async function run() {
 
           const result = await notificationsCollection.insertOne(notification);
 
-          // ✅🔥 6. REALTIME SOCKET ADD (ONLY THIS PART NEW)
+          //  6. REALTIME SOCKET ADD (ONLY THIS PART NEW)
           if (receiverUser?._id) {
             const fullNotification = {
-              _id: result.insertedId, // 🔥 IMPORTANT
+              _id: result.insertedId, // IMPORTANT
               ...notification,
             };
 
@@ -2475,14 +2467,14 @@ async function run() {
               fullNotification,
             );
           }
-          // 🔥 EXTRA (IMPORTANT FOR INVITATION PAGE REALTIME)
+          //  EXTRA (IMPORTANT FOR INVITATION PAGE REALTIME)
           io.to(receiverUser._id.toString()).emit("newInvitation", {
             projectId,
             email,
             status: "pending",
             created_time: new Date(),
           });
-          // 🔥 7. email send (existing)
+          //  7. email send (existing)
           const transporter = nodemailer.createTransport({
             service: "gmail",
             auth: {
@@ -2567,7 +2559,7 @@ async function run() {
             });
           }
 
-          // 🔥 manager info আনো
+          //  manager info আনো
           const manager = await usersCollection.findOne({
             email: project.created_by,
           });
@@ -2610,7 +2602,7 @@ async function run() {
 
           const query = {
             created_by: email,
-            status: "approved", // 👈 main fix
+            status: "approved", //  main fix
           };
 
           const result = await projectsCollection.find(query).toArray();
@@ -2644,7 +2636,6 @@ async function run() {
             });
           }
 
-          // 👉 user collection থেকে user বের করো
           const user = await usersCollection.findOne({ email });
 
           if (!user) {
@@ -2654,7 +2645,7 @@ async function run() {
             });
           }
 
-          // 👉 userId দিয়ে notification filter
+          //  userId notification filter
           const notifications = await notificationsCollection
             .find({ receiverId: user._id })
             .sort({ created_time: -1 })
@@ -2764,24 +2755,24 @@ async function run() {
               message: "All fields are required",
             });
           }
-          // ✅ 1. USER GET
+          //  1. USER GET
           const user = await usersCollection.findOne({ email });
 
-          // ✅ 2. COUNT USER PROJECT
+          //  2. COUNT USER PROJECT
           const projectCount = await projectsCollection.countDocuments({
             created_by: email,
           });
 
-          // ✅ 3. FREE PLAN LIMIT CHECK
+          //  3. FREE PLAN LIMIT CHECK
           if (user?.plan?.type === "free" && projectCount >= 1) {
             return res.status(403).send({
               success: false,
-              message: "You hit the limit. Please upgrade your plan 🚀",
+              message: "You hit the limit. Please upgrade your plan ",
               code: "LIMIT_REACHED",
             });
           }
 
-          // 🔥 1. CREATE PROJECT
+          //  1. CREATE PROJECT
           const project = {
             teamName,
             projectTitle,
@@ -2800,7 +2791,7 @@ async function run() {
             ...project,
           };
 
-          // 🔥 2. GET ALL ADMINS
+          //  2. GET ALL ADMINS
           const admins = await usersCollection
             .find({ role: "admin" })
             .toArray();
@@ -2813,7 +2804,7 @@ async function run() {
             });
           }
 
-          // 🔥 3. CREATE NOTIFICATIONS
+          //  3. CREATE NOTIFICATIONS
           const notifications = admins.map((admin) => ({
             type: "project_created",
             message: `New project created , project name "${projectTitle}" team name "${teamName}". Please check for approval.`,
@@ -2828,30 +2819,30 @@ async function run() {
             read: false,
           }));
 
-          // 🔥 4. SAVE ALL NOTIFICATIONS
+          //  4. SAVE ALL NOTIFICATIONS
           const saved = await notificationsCollection.insertMany(notifications);
 
-          // 🔥 5. REALTIME SOCKET (FIXED ✅)
+          //  5. REALTIME SOCKET (FIXED )
           saved.insertedIds &&
             Object.values(saved.insertedIds).forEach((id, index) => {
               const admin = admins[index];
 
               const fullNotification = {
-                _id: id, // 🔥 IMPORTANT (DB ID)
+                _id: id, //  IMPORTANT (DB ID)
                 ...notifications[index],
               };
 
-              // 👉 targeted user room এ send
+              //  targeted user room এ send
               io.to(admin._id.toString()).emit(
                 "newNotification",
                 fullNotification,
               );
             });
 
-          // 🔥 OPTIONAL: project realtime
+          //  OPTIONAL: project realtime
           io.emit("newProject", newProject);
 
-          // 🔥 RESPONSE
+          //  RESPONSE
           res.send({
             success: true,
             message: "Project created & admins notified",
@@ -2945,7 +2936,7 @@ async function run() {
         let updateDoc;
 
         if (existingUser) {
-          // 🔥 ONLY UPDATE NAME + updatedAt
+          //  ONLY UPDATE NAME + updatedAt
           updateDoc = {
             $set: {
               name: name || existingUser.name || "No Name",
@@ -2953,7 +2944,7 @@ async function run() {
             },
           };
         } else {
-          // 🆕 NEW USER
+          //  NEW USER
           updateDoc = {
             $set: {
               name: name || "No Name",
@@ -3001,7 +2992,7 @@ async function run() {
       async (req, res) => {
         try {
           const email = req.params.email;
-          const { name } = req.body; // ❌ photo removed
+          const { name } = req.body; //  photo removed
 
           const result = await usersCollection.updateOne(
             { email },
@@ -3032,7 +3023,7 @@ async function run() {
     //   "Pinged your deployment. You successfully connected to MongoDB!",
     // );
   } catch (err) {
-    console.log(err);
+    // console.log(err);
   }
 }
 run();
