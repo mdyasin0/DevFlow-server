@@ -9,9 +9,8 @@ const app = express();
 app.use(cookieParser());
 app.use(
   cors({
-    origin:
-    // "https://devflow-32d85.web.app",
-      "http://localhost:5173",
+    origin:"https://devflow-32d85.web.app",
+      // "http://localhost:5173",
     credentials: true,
   }),
 );
@@ -22,9 +21,8 @@ const { Server } = require("socket.io");
 const PORT = process.env.PORT || 5000;
 const io = new Server(server, {
   cors: {
-    origin:
-    // "https://devflow-32d85.web.app",
-      "http://localhost:5173", 
+    origin:"https://devflow-32d85.web.app",
+      // "http://localhost:5173", 
     methods: ["GET", "POST", "PATCH", "DELETE"],
   },
 });
