@@ -9,8 +9,9 @@ const app = express();
 app.use(cookieParser());
 app.use(
   cors({
-    origin:"https://devflow-32d85.web.app",
-      // "http://localhost:5173",
+    origin:
+    // "https://devflow-32d85.web.app",
+      "http://localhost:5173",
     credentials: true,
   }),
 );
@@ -21,8 +22,9 @@ const { Server } = require("socket.io");
 const PORT = process.env.PORT || 5000;
 const io = new Server(server, {
   cors: {
-    origin:"https://devflow-32d85.web.app",
-      // "http://localhost:5173", 
+    origin:
+    // "https://devflow-32d85.web.app",
+      "http://localhost:5173", 
     methods: ["GET", "POST", "PATCH", "DELETE"],
   },
 });
@@ -2465,14 +2467,15 @@ async function run() {
               "newNotification",
               fullNotification,
             );
-          }
-          //  EXTRA (IMPORTANT FOR INVITATION PAGE REALTIME)
+             //  EXTRA (IMPORTANT FOR INVITATION PAGE REALTIME)
           io.to(receiverUser._id.toString()).emit("newInvitation", {
             projectId,
             email,
             status: "pending",
             created_time: new Date(),
           });
+          }
+         
           //  7. email send (existing)
           const transporter = nodemailer.createTransport({
             service: "gmail",
@@ -2968,11 +2971,27 @@ async function run() {
           upsert: true,
         });
 
-        res.send({
-          success: true,
-          message: "User synced successfully",
-          data: result,
-        });
+    // ✅ ALWAYS get user
+    const user = await usersCollection.findOne({ email });
+
+    // ✅ FIX OLD NOTIFICATIONS
+    await notificationsCollection.updateMany(
+      {
+        receiverEmail: email,
+        receiverId: null,
+      },
+      {
+        $set: {
+          receiverId: user._id,
+        },
+      }
+    );
+
+    res.send({
+      success: true,
+      message: "User synced & notifications updated",
+    });
+       
       } catch (error) {
         res.status(500).send({
           success: false,
@@ -3003,11 +3022,36 @@ async function run() {
             },
           );
 
-          res.send({
-            success: true,
-            message: "Profile updated successfully",
-            data: result,
-          });
+      // 2. UPDATE MESSAGES (senderName)
+      await projectMessagesCollection.updateMany(
+        { senderEmail: email },
+        {
+          $set: {
+            senderName: name,
+          },
+        }
+      );
+
+      // 3. UPDATE TEAM MEMBERS (array ভিতরে)
+      await projectsCollection.updateMany(
+        {
+          "teammember.email": email,
+        },
+        {
+          $set: {
+            "teammember.$[elem].name": name,
+          },
+        },
+        {
+          arrayFilters: [{ "elem.email": email }],
+        }
+      );
+
+      res.send({
+        success: true,
+        message: "Profile + related data updated",
+      });
+        
         } catch (error) {
           res.status(500).send({
             success: false,
