@@ -392,7 +392,7 @@ async function run() {
         html: `
       <h3>Your task deadline is in ${hour} hours</h3>
       <p>Don't forget to complete your task on time.</p>
-      <a href="http://localhost:5173/developer_dashboard/joined_team_details/${projectId}">
+      <a href="https://devflow-32d85.web.app/developer_dashboard/joined_team_details/${projectId}">
         View Project
       </a>
     `,
@@ -2168,8 +2168,8 @@ async function run() {
             },
           ],
 
-          success_url: `http://localhost:5000/payment-success?session_id={CHECKOUT_SESSION_ID}&email=${email}`,
-          cancel_url: `http://localhost:5173/cancel`,
+          success_url: `https://devflow-32d85.web.app/payment-success?session_id={CHECKOUT_SESSION_ID}&email=${email}`,
+          cancel_url: `https://devflow-32d85.web.app/cancel`,
         });
 
         res.json({ url: session.url });
@@ -2216,7 +2216,7 @@ async function run() {
           },
         );
 
-        res.redirect("http://localhost:5173/success");
+        res.redirect("https://devflow-32d85.web.app/success");
       } catch (error) {
         res.status(500).send(error.message);
       }
@@ -2510,7 +2510,7 @@ async function run() {
    
 
       <div style="margin:20px 0;">
-        <a href="http://localhost:5173/developer_dashboard/invitations" 
+        <a href="https://devflow-32d85.web.app/developer_dashboard/invitations" 
            style="background:#2d6cdf; color:white; padding:12px 20px; text-decoration:none; border-radius:6px; display:inline-block;">
           Join Project
         </a>
