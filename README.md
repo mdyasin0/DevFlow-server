@@ -167,7 +167,7 @@ It supports automated application workflows and scheduled operations.
 ### 1. Clone the repository
 
 ```bash
-git clone YOUR_SERVER_REPOSITORY_URL
+git clone https://github.com/mdyasin0/DevFlow-server.git
 cd YOUR_SERVER_REPOSITORY_FOLDER
 ```
 
