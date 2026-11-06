@@ -1,148 +1,209 @@
-# Team Collaboration SaaS Platform 
+# Team Collaboration SaaS Platform — Server
 
 ## Overview
 
-This is the backend of a full stack team collaboration and project management platform. It provides REST APIs, authentication, real-time communication, and business logic for managing users, projects, tasks, and team workflows.
+The backend of a full-stack Team Collaboration and Project Management SaaS Platform.
 
-The system is designed to handle role-based access control, scalable data management, and SaaS-based feature limitations.
+It provides REST APIs and server-side business logic for managing users, projects, tasks, team collaboration, authentication, notifications, and subscription-based features.
+
+The server is responsible for processing application requests, managing data, enforcing access permissions, and coordinating real-time communication between connected clients.
 
 ## Core Responsibilities
 
-* Authentication and authorization
-* Project and task management logic
-* Team and invitation system
-* Notification system
-* Real-time updates using Socket.io
-* Payment and subscription handling
-* Email and background job processing
+- Authentication and authorization
+- Role-based access control
+- Project and task management logic
+- Project approval workflows
+- Team invitation and management
+- Discussion and collaboration data management
+- Notification management and real-time delivery
+- Subscription and premium feature management
+- File upload handling
+- Email processing and scheduled tasks
 
 ## Tech Stack
 
-* Node.js
-* Express.js
-* MongoDB (Native Driver)
-* JSON Web Token (JWT)
-* Cookie Parser
-* CORS
-* Dotenv
-* Socket.io
-* Stripe
-* Nodemailer
-* Node-cron
+### Backend
+- Node.js
+- Express.js
 
+### Database
+- MongoDB (Native Driver)
+
+### Authentication & Security
+- JSON Web Token (JWT)
+- Cookie Parser
+- CORS
+- Dotenv
+
+### Real-Time Communication
+- Socket.io
+
+### Payment Integration
+- Stripe
+
+### Email & Background Processing
+- Nodemailer
+- Node-cron
 
 ## Architecture
 
-The backend follows a REST API architecture with modular structure:
+The backend follows a REST API architecture with a modular structure.
 
-* Routes
-* Controllers
-* Services
-* Middleware
-* Database Layer
+Main application layers include:
 
-## Database Collections
+- **Routes:** Define API endpoints.
+- **Controllers:** Handle incoming requests and responses.
+- **Services:** Manage application business logic.
+- **Middleware:** Handle authentication, authorization, and request processing.
+- **Database Layer:** Manage communication with MongoDB.
 
-* User
-* Projects
-* project discussions
-* Notifications
+## Database Management
 
-## Authentication System
+MongoDB is used to store and manage application data.
 
+The documented data collections include:
 
-* JWT-based authorization
-* Protected routes 
-* Blocked user handling
+- Users
+- Projects
+- Project Discussions
+- Notifications
+
+## Authentication & Authorization
+
+- JWT-based authentication and authorization.
+- Protected API routes.
+- Token-based access control.
+- Authentication and authorization middleware.
 
 ## Role-Based Access Control
 
-* User: Basic interaction and task handling
-* Manager: Project and task management
-* Admin: System control, user management, project approval
+The server enforces permissions based on user roles.
 
-## Project Management Logic
+- **User:** Access to permitted application features and task-related workflows.
+- **Manager:** Project and task management permissions.
+- **Admin:** Administrative permissions, user management, and project approval.
 
-* Project creation with pending status
-* Admin approval required for visibility
-* Project-level access control
+## Project Management
 
-## Task Management System
+- Handle project creation and management requests.
+- Manage project approval workflows.
+- Support admin approval before projects become visible.
+- Enforce project-level access permissions.
 
-* Task lifecycle: Todo → Running → Done
-* Task assignment by managers
-* Deadline and priority control
-* Task reopen and edit system
+## Task Management
 
-## Invitation System
+- Manage task creation, assignment, and updates.
+- Handle task status transitions:
+  - Todo
+  - Running
+  - Done
+- Support task management workflows and progress tracking.
 
-* Email-based team invitation
-* Duplicate prevention
-* Status tracking (Pending, Approved, Rejected)
+## Team & Invitation Management
+
+- Handle team invitation workflows.
+- Process invitation-related requests.
+- Manage team collaboration data.
+
+## Discussion & Real-Time Communication
+
+Socket.io is used to support real-time communication between the server and connected clients.
+
+Server-side responsibilities include:
+
+- Delivering real-time notifications.
+- Sending task-related updates.
+- Synchronizing relevant updates across connected clients.
+- Supporting real-time collaboration features.
 
 ## Notification System
 
-* Role-based notifications
-* Read/unread tracking
-* Real-time delivery via Socket.io
+- Manage application notifications.
+- Support role-based notification workflows.
+- Handle notification read/unread status.
+- Deliver notifications through Socket.io.
 
-## Real-time System
+## Payment & Subscription Management
 
-Socket.io is used to:
+Stripe is integrated to support subscription-related operations.
 
-* Send instant notifications
-* Sync data across clients
-* Enable live collaboration features
-
-## Payment and SaaS Logic
-
-* Stripe integration for subscription
-* Free vs Premium feature control
-* Subscription expiry management
+- Handle subscription-related payment workflows.
+- Support Free and Premium subscription plans.
+- Enforce subscription-based feature restrictions.
+- Manage premium feature access.
 
 ## File Handling
 
-
-* Task file attachments (restricted to premium users)
+- Handle file upload requests.
+- Support task-related file attachments.
+- Apply premium subscription restrictions to file upload functionality.
 
 ## Email System
 
-* Invitation emails
-* Deadline reminders
-* Bulk email (admin feature)
+Nodemailer is used for server-side email processing.
 
-## Background Jobs
+Email-related functionality supports application workflows such as:
 
-* Deadline reminder system using cron jobs
-* premium experity check
-* Active user tracking
+- Team invitation emails.
+- Application email notifications.
+- Scheduled email-related tasks.
 
-## Security
+## Background Jobs & Automation
 
-* JWT-based API protection
-* Role-based middleware
-* Secure data validation and access control
+Node-cron is used to schedule and execute background tasks.
 
-## Installation and Setup
+It supports automated application workflows and scheduled operations.
 
-1. Clone the repository
-2. Install dependencies:
-   npm install
-3. Create a .env file and configure:
-   MONGO_URI = 
-   EMAIL_PASS=
-   JWT_SECRET=
-   STRIPE_SECRET_KEY=
-1. Run the server:
-   nodemon index.js
+## Installation & Setup
 
+### Prerequisites
 
-## Notes
+- Node.js
+- npm
+- MongoDB connection
+- Required service credentials
 
-* Frontend client must be configured with correct API URL
-* Socket connection must match client configuration
-* Sensitive credentials should not be exposed
+### 1. Clone the repository
 
-## Purpose
+```bash
+git clone YOUR_SERVER_REPOSITORY_URL
+cd YOUR_SERVER_REPOSITORY_FOLDER
+```
 
-This backend demonstrates the ability to design and build a secure, scalable, and production-ready system with real-time capabilities, SaaS logic, and structured architecture.
+### 2. Install dependencies
+
+```bash
+npm install
+```
+
+### 3. Configure environment variables
+
+Create a `.env` file in the project root:
+
+```env
+MONGO_URI=YOUR_MONGODB_CONNECTION_STRING
+EMAIL_PASS=YOUR_EMAIL_PASSWORD
+JWT_SECRET=YOUR_JWT_SECRET
+STRIPE_SECRET_KEY=YOUR_STRIPE_SECRET_KEY
+```
+
+Make sure all required environment variables are configured according to the server source code. Never commit real credentials or secret values to the repository.
+
+### 4. Start the server
+
+```bash
+nodemon index.js
+```
+
+## Important Notes
+
+- The frontend client must use the correct backend API URL.
+- Socket.io client and server configurations must be compatible.
+- MongoDB must be accessible for database-dependent features.
+- Firebase and other external service configurations must be valid where required.
+- Sensitive credentials must be stored in environment variables and never exposed publicly.
+
+## Project Purpose
+
+This project demonstrates practical backend development through REST API design, database management, authentication, role-based authorization, real-time communication, payment integration, and server-side business logic for a team collaboration SaaS application.
